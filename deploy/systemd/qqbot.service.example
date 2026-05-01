@@ -1,0 +1,15 @@
+[Unit]
+Description=QQ Court Claim Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Linux_bot
+EnvironmentFile=/opt/Linux_bot/.env
+ExecStart=/opt/Linux_bot/.venv/bin/python /opt/Linux_bot/run_bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

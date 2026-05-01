@@ -1,0 +1,50 @@
+owner_qq: "replace-with-owner-qq"
+secondary_owner_qq:
+target_groups:
+  - "replace-with-target-group-id"
+
+target_campus_key: "huqu"
+campus_aliases:
+  huqu:
+    - "replace-with-campus-alias"
+
+min_start_time: "17:00"
+cooldown_hours: 48
+approval_ttl_seconds: 900
+storage_path: "data/state.json"
+log_path: "logs/bot.log"
+
+keywords:
+  include:
+    - "replace-with-offer-keyword"
+  exclude: []
+
+onebot:
+  ws_url: "ws://127.0.0.1:3002/onebot/v11/ws"
+  access_token:
+
+minimax:
+  endpoint: "https://api.minimaxi.com/v1/chat/completions"
+  model: "MiniMax-M2.7"
+  timeout_seconds: 60
+
+self_learning:
+  source_group_id: "replace-with-source-group-id"
+  test_group_id: "replace-with-test-group-id"
+  candidates_path: "data/selflearn_candidates.json"
+  learned_rules_path: "data/learned_rules.json"
+  history_search_roots: []
+  history_auto_search_enabled: true
+  history_max_files: 200
+  history_max_file_bytes: 2000000
+
+avatar_rotation:
+  enabled: false
+  interval_hours: 24
+  random_jitter_minutes: 120
+  initial_delay_seconds: 300
+  image_directory: "data/avatar_pool"
+  image_urls: []
+  nickname_pool:
+    - "Limerence"
+    - "Petrichor"

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.env
+config.yaml
+logs/
+data/state.json
+data/*.json
+data/*.tmp
+data/group_*_history.txt
+data/avatar_pool/*
+!data/avatar_pool/.gitkeep

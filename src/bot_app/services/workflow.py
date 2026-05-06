@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from nonebot.adapters.onebot.v11 import Bot
@@ -79,8 +79,11 @@ class ClaimWorkflow:
         elif self.prefilter.match(incoming.raw_text):
             parsed = await self.parser.parse(incoming.raw_text)
             if parsed.is_candidate:
-                group_name = await self._fetch_group_name(bot, incoming.group_id)
                 slot = self.slot_parser.parse_slot(incoming.raw_text, incoming.timestamp)
+                if self._starts_within_claim_lead_time(slot, incoming.timestamp):
+                    logger.info("Ignored claim message %s because slot starts within one hour", incoming.message_id)
+                    return
+                group_name = await self._fetch_group_name(bot, incoming.group_id)
                 await self._handle_claim_candidate(
                     bot=bot,
                     incoming=incoming,
@@ -92,6 +95,16 @@ class ClaimWorkflow:
                 logger.info("Ignored claim message %s: %s", incoming.message_id, parsed.reason)
 
         await self._handle_swap_watch(bot, incoming, group_name)
+
+    @staticmethod
+    def _starts_within_claim_lead_time(slot: ResolvedSlot | None, reference_time: datetime) -> bool:
+        if slot is None:
+            return False
+        try:
+            slot_start = datetime.fromisoformat(f"{slot.date}T{slot.start_time}")
+        except ValueError:
+            return False
+        return slot_start - reference_time < timedelta(hours=1)
 
     async def _handle_claim_candidate(
         self,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 import logging
 import os
+from pathlib import Path
 import sys
 from typing import NamedTuple
 import re
@@ -11,7 +13,7 @@ import uuid
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
 
-from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, ClaimMode, SwapWatchRule
+from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, ClaimMode, DismissedClaimSlot, SwapWatchRule, TemporaryClaimSlot
 from bot_app.runtime import get_runtime
 from bot_app.services.avatar_rotation import AvatarRotator
 from bot_app.services.notify import format_slot
@@ -19,6 +21,7 @@ from bot_app.services.notify import format_slot
 logger = logging.getLogger(__name__)
 
 private_message_matcher = on_message(priority=10, block=False)
+COMMAND_REPLY_DELETE_DELAY_SECONDS = 20.0
 
 
 class ParsedCommand(NamedTuple):
@@ -85,6 +88,11 @@ def _normalize_command(text: str) -> ParsedCommand | None:
         "重置全部": "resetall",
         "secondary": "secondary",
         "swap": "swap",
+        "tempclaim": "tempclaim",
+        "stopclaim": "stopclaim",
+        "stop": "stopclaim",
+        "停止抢送": "stopclaim",
+        "停抢": "stopclaim",
         "selflearn": "selflearn",
         "avatar": "avatar",
         "头像": "avatar",
@@ -119,7 +127,7 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
         return
 
     if command.name == "help":
-        await _reply_to_user(bot, sender_id, _build_help_message())
+        await _reply_to_user(bot, sender_id, _build_help_image_message())
         return
 
     if command.name == "status":
@@ -152,6 +160,14 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
 
     if command.name == "swap":
         await _handle_swap_command(bot, sender_id, command.args)
+        return
+
+    if command.name == "tempclaim":
+        await _handle_tempclaim_command(bot, sender_id, command.args)
+        return
+
+    if command.name == "stopclaim":
+        await _handle_stopclaim_command(bot, sender_id, command.args)
         return
 
     if command.name == "swapwatch":
@@ -252,8 +268,26 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
         return
 
 
-async def _reply_to_user(bot: Bot, user_id: str, message: str) -> None:
-    await bot.send_private_msg(user_id=_ob_id(user_id), message=message)
+async def _reply_to_user(bot: Bot, user_id: str, message: str | Message | MessageSegment) -> None:
+    result = await bot.send_private_msg(user_id=_ob_id(user_id), message=message)
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    if message_id is not None:
+        _schedule_command_reply_deletion(bot, message_id)
+
+
+def _schedule_command_reply_deletion(bot: Bot, message_id: int | str) -> None:
+    loop = asyncio.get_running_loop()
+    loop.call_later(
+        COMMAND_REPLY_DELETE_DELAY_SECONDS,
+        lambda: asyncio.create_task(_delete_command_reply(bot, message_id)),
+    )
+
+
+async def _delete_command_reply(bot: Bot, message_id: int | str) -> None:
+    try:
+        await bot.delete_msg(message_id=_ob_id(str(message_id)))
+    except Exception:
+        logger.exception("Failed to delete private command reply %s", message_id)
 
 
 def _restart_process() -> None:
@@ -296,6 +330,101 @@ async def _handle_mode_command(bot: Bot, sender_id: str, args: list[str]) -> Non
 
     await runtime.store.set_claim_mode(mode)
     await _reply_to_user(bot, sender_id, await _build_mode_message())
+
+
+async def _handle_tempclaim_command(bot: Bot, sender_id: str, args: list[str]) -> None:
+    runtime = get_runtime()
+    now = datetime.now()
+    if not args or args[0].lower() == "list":
+        slots = await runtime.store.list_temporary_claim_slots(now=now)
+        if not slots:
+            await _reply_to_user(bot, sender_id, "【临时抢场】当前没有临时规则")
+            return
+        lines = ["【临时抢场】当前规则："]
+        for slot in slots:
+            lines.append(
+                f"- {slot.date} {slot.start_time}-{slot.end_time} {slot.campus or ''}，过期 {slot.expires_at.strftime('%Y-%m-%d %H:%M')}"
+            )
+        await _reply_to_user(bot, sender_id, "\n".join(lines))
+        return
+
+    payload = " ".join(args).strip()
+    today = now.date()
+    slot = runtime.slot_parser.parse_slot(payload, now, fallback_date=today.isoformat())
+    if slot is None or slot.end_time is None:
+        await _reply_to_user(bot, sender_id, "添加失败：用法 /tempclaim <今天的时间段>，例如 /tempclaim 4-5")
+        return
+    if slot.date != today.isoformat():
+        await _reply_to_user(bot, sender_id, "添加失败：临时抢场规则仅支持今天生效")
+        return
+    try:
+        slot_start = datetime.fromisoformat(f"{slot.date}T{slot.start_time}")
+    except ValueError:
+        await _reply_to_user(bot, sender_id, "添加失败：时间段格式无效")
+        return
+    if slot_start - now < timedelta(hours=1):
+        await _reply_to_user(bot, sender_id, "添加失败：抢场时间距离当前时间必须不低于 1 小时")
+        return
+
+    expires_at = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    saved = await runtime.store.save_temporary_claim_slot(
+        TemporaryClaimSlot(
+            date=slot.date,
+            start_time=slot.start_time,
+            end_time=slot.end_time,
+            campus=slot.campus,
+            created_at=now,
+            expires_at=expires_at,
+        ),
+        now=now,
+    )
+    if saved is None:
+        await _reply_to_user(bot, sender_id, "添加失败：临时规则已过期")
+        return
+    await _reply_to_user(
+        bot,
+        sender_id,
+        f"已添加临时抢场规则：{slot.date} {slot.start_time}-{slot.end_time} {slot.campus}，明天 00:00 自动清除",
+    )
+
+
+async def _handle_stopclaim_command(bot: Bot, sender_id: str, args: list[str]) -> None:
+    runtime = get_runtime()
+    now = datetime.now()
+    if not args:
+        await _reply_to_user(bot, sender_id, "停止失败：用法 /stopclaim <今天的时间段>，例如 /stopclaim 4-5")
+        return
+
+    payload = " ".join(args).strip()
+    today = now.date()
+    slot = runtime.slot_parser.parse_slot(payload, now, fallback_date=today.isoformat())
+    if slot is None or slot.end_time is None:
+        await _reply_to_user(bot, sender_id, "停止失败：用法 /stopclaim <今天的时间段>，例如 /stopclaim 4-5")
+        return
+    if slot.date != today.isoformat():
+        await _reply_to_user(bot, sender_id, "停止失败：停止抢送规则仅支持今天的场地")
+        return
+
+    expires_at = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    saved = await runtime.store.save_dismissed_claim_slot(
+        DismissedClaimSlot(
+            date=slot.date,
+            start_time=slot.start_time,
+            end_time=slot.end_time,
+            campus=slot.campus,
+            created_at=now,
+            expires_at=expires_at,
+        ),
+        now=now,
+    )
+    if saved is None:
+        await _reply_to_user(bot, sender_id, "停止失败：规则已过期")
+        return
+    await _reply_to_user(
+        bot,
+        sender_id,
+        f"已停止今天抢送：{slot.date} {slot.start_time}-{slot.end_time} {slot.campus}，明天 00:00 自动清除",
+    )
 
 
 async def _handle_listen_command(bot: Bot, sender_id: str, args: list[str]) -> None:
@@ -878,6 +1007,19 @@ async def _try_recall_latest_auto_claim(bot: Bot, sender_id: str) -> bool:
         await _reply_to_user(bot, sender_id, f"撤回失败：自动发送的 1 无法撤回：{exc}")
         return True
 
+    now = datetime.now()
+    if recall_task.slot_date and recall_task.start_time:
+        await runtime.store.save_dismissed_claim_slot(
+            DismissedClaimSlot(
+                date=recall_task.slot_date,
+                start_time=recall_task.start_time,
+                end_time=recall_task.end_time,
+                campus=recall_task.campus,
+                created_at=now,
+                expires_at=datetime.combine(now.date() + timedelta(days=1), datetime.min.time()),
+            ),
+            now=now,
+        )
     await runtime.store.set_pending_auto_recall(None)
     await runtime.cooldown.reset()
     await runtime.notifier.send_auto_recall_result(bot, recall_task)
@@ -1166,6 +1308,8 @@ def _build_help_message() -> str:
             "/secondary: 查看第二主人",
             "/swap list: 查看全部换场监控规则",
             "/swap 我有今晚78，周六12-13，我需要明晚89，周六11-12",
+            "/tempclaim 4-5: 添加仅今天有效的临时抢场时段，明天自动清除",
+            "/stopclaim 4-5: 停止今天这个时间段的自动抢送，明天自动清除",
             "/avatar: 立即从头像池随机更换 bot 头像",
             "/selflearn preview|run|apply: 自学习规则预览、验证和确认应用",
             "/restart: 重启 bot 进程",
@@ -1174,6 +1318,18 @@ def _build_help_message() -> str:
             "兼容旧命令：health / 状态",
         ]
     )
+
+
+def _help_image_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "assets" / "help_card_imagegen_20260511.png"
+
+
+def _build_help_image_message() -> MessageSegment | str:
+    image_path = _help_image_path()
+    if not image_path.exists():
+        logger.warning("Help image asset is missing: %s", image_path)
+        return _build_help_message()
+    return MessageSegment.image(file=image_path.as_uri())
 
 
 async def _build_minimax_probe_message() -> str:

@@ -7,7 +7,7 @@ import logging
 from nonebot.adapters.onebot.v11 import Bot
 
 from bot_app.config import AppConfig
-from bot_app.models import ApprovalTaskKind, AutoRecallTask, ClaimMode, IncomingGroupMessage, ResolvedSlot, SwapWatchRule
+from bot_app.models import ApprovalTaskKind, AutoRecallTask, ClaimMode, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, SwapWatchRule
 from bot_app.services.approval import ApprovalService
 from bot_app.services.cooldown import CooldownService
 from bot_app.services.exchange_parse import ExchangeParseService
@@ -78,18 +78,37 @@ class ClaimWorkflow:
             logger.info("Skipped claim listening for message %s because listening is paused", incoming.message_id)
         elif self.prefilter.match(incoming.raw_text):
             parsed = await self.parser.parse(incoming.raw_text)
-            if parsed.is_candidate:
-                slot = self.slot_parser.parse_slot(incoming.raw_text, incoming.timestamp)
-                if self._starts_within_claim_lead_time(slot, incoming.timestamp):
+            slot = self.slot_parser.parse_slot(incoming.raw_text, incoming.timestamp)
+            temporary_slot = slot or self._slot_from_parsed(incoming, parsed)
+            temporary_claim = await self._matches_temporary_claim_slot(incoming, parsed, temporary_slot)
+            if parsed.is_candidate or temporary_claim:
+                slot_for_checks = (
+                    None
+                    if not temporary_claim and self._looks_like_question(incoming.raw_text)
+                    else temporary_slot
+                )
+                if self._starts_within_claim_lead_time(
+                    slot_for_checks,
+                    incoming.timestamp,
+                ) or (
+                    slot_for_checks is None
+                    and self._parsed_starts_within_claim_lead_time(parsed, incoming.timestamp, incoming.raw_text)
+                ):
                     logger.info("Ignored claim message %s because slot starts within one hour", incoming.message_id)
                     return
+                if not temporary_claim and await self.store.is_dismissed_claim_slot(temporary_slot, incoming.timestamp):
+                    logger.info("Ignored claim message %s because the slot was dismissed today", incoming.message_id)
+                    return
+                if temporary_claim and not parsed.is_candidate:
+                    parsed = self._promote_temporary_claim(parsed, temporary_slot)
                 group_name = await self._fetch_group_name(bot, incoming.group_id)
                 await self._handle_claim_candidate(
                     bot=bot,
                     incoming=incoming,
                     group_name=group_name,
                     parsed=parsed,
-                    slot_date=slot.date if slot else None,
+                    slot_date=slot_for_checks.date if slot_for_checks else None,
+                    temporary_claim=temporary_claim,
                 )
             else:
                 logger.info("Ignored claim message %s: %s", incoming.message_id, parsed.reason)
@@ -106,6 +125,81 @@ class ClaimWorkflow:
             return False
         return slot_start - reference_time < timedelta(hours=1)
 
+    @staticmethod
+    def _has_explicit_future_date(text: str) -> bool:
+        return any(marker in text for marker in ("明天", "明晚", "明日", "后天", "周", "星期"))
+
+    @staticmethod
+    def _parsed_starts_within_claim_lead_time(parsed: ParsedCandidate, reference_time: datetime, text: str) -> bool:
+        if parsed.start_time is None:
+            return False
+        if ClaimWorkflow._has_explicit_future_date(text):
+            return False
+        slot_start = datetime.combine(reference_time.date(), parsed.start_time)
+        return slot_start - reference_time < timedelta(hours=1)
+
+    def _looks_like_question(self, text: str) -> bool:
+        looks_like_question = getattr(self.parser, "_looks_like_question", None)
+        if looks_like_question is None:
+            return False
+        return bool(looks_like_question(text))
+
+    async def _matches_temporary_claim_slot(
+        self,
+        incoming: IncomingGroupMessage,
+        parsed: ParsedCandidate,
+        slot: ResolvedSlot | None,
+    ) -> bool:
+        if slot is None or slot.end_time is None:
+            return False
+        if parsed.start_time is None or parsed.end_time is None:
+            return False
+        if self.parser._detect_intent(incoming.raw_text) is False or self.parser._looks_like_question(incoming.raw_text):
+            return False
+        if not self.parser._has_offer_action(incoming.raw_text):
+            return False
+        for temporary_slot in await self.store.list_temporary_claim_slots(now=incoming.timestamp):
+            if temporary_slot.date != slot.date:
+                continue
+            if temporary_slot.start_time != slot.start_time or temporary_slot.end_time != slot.end_time:
+                continue
+            if temporary_slot.campus and temporary_slot.campus != slot.campus:
+                continue
+            return True
+        return False
+
+    def _slot_from_parsed(
+        self,
+        incoming: IncomingGroupMessage,
+        parsed: ParsedCandidate,
+    ) -> ResolvedSlot | None:
+        if parsed.start_time is None or parsed.end_time is None:
+            return None
+        campus = parsed.campus
+        if campus is None:
+            campus = self.config.target_campus_aliases[0] if self.config.target_campus_aliases else self.config.target_campus_key
+        return ResolvedSlot(
+            date=incoming.timestamp.date().isoformat(),
+            start_time=parsed.start_time.strftime("%H:%M"),
+            end_time=parsed.end_time.strftime("%H:%M"),
+            campus=campus,
+            raw_text=incoming.raw_text,
+        )
+
+    @staticmethod
+    def _promote_temporary_claim(parsed: ParsedCandidate, slot: ResolvedSlot | None) -> ParsedCandidate:
+        return parsed.model_copy(
+            update={
+                "is_candidate": True,
+                "campus": slot.campus if slot else parsed.campus,
+                "start_time": parsed.start_time,
+                "end_time": parsed.end_time,
+                "confidence": max(parsed.confidence, 0.97),
+                "reason": "临时抢场规则命中",
+                "needs_llm": False,
+            }
+        )
+
     async def _handle_claim_candidate(
         self,
         bot: Bot,
@@ -113,6 +207,7 @@ class ClaimWorkflow:
         group_name: str,
         parsed,
         slot_date: str | None,
+        temporary_claim: bool = False,
     ) -> None:
         mode = await self.store.get_claim_mode()
         if mode == ClaimMode.AUTO:
@@ -178,6 +273,7 @@ class ClaimWorkflow:
                     user_id=updated.user_id,
                     sender_nickname=updated.sender_nickname,
                     raw_text=updated.raw_text,
+                    campus=updated.campus,
                     slot_date=updated.slot_date,
                     start_time=updated.start_time,
                     end_time=updated.end_time,
@@ -186,7 +282,7 @@ class ClaimWorkflow:
             )
         else:
             await self.store.set_pending_auto_recall(None)
-        if await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
+        if not temporary_claim and await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
             return
         await self.notifier.send_auto_claim_result(bot, updated, await self.cooldown.get_remaining(updated.sent_at))
 

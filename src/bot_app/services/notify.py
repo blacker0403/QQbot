@@ -23,6 +23,13 @@ def _format_remaining(delta: timedelta) -> str:
     return f"{hours}小时{minutes}分钟"
 
 
+def _format_claim_response_interval(task: ApprovalTask) -> str | None:
+    if task.source_timestamp is None or task.sent_at is None:
+        return None
+    elapsed_seconds = max(0.0, (task.sent_at - task.source_timestamp).total_seconds())
+    return f"扣 1 间隔：{elapsed_seconds:.1f}s"
+
+
 def format_slot(slot: ResolvedSlot | None) -> str:
     if slot is None:
         return "未知"
@@ -36,14 +43,19 @@ class NotifyService:
         self.config = config
         self.store = store
 
-    async def _owner_recipients(self) -> list[str]:
+    async def _owner_recipients(self, include_secondary: bool = True) -> list[str]:
         recipients = [self.config.owner_qq]
+        if not include_secondary:
+            return recipients
         secondary_owner_qq = await self.store.get_secondary_owner_qq()
         if not secondary_owner_qq:
             secondary_owner_qq = self.config.secondary_owner_qq
         if secondary_owner_qq and secondary_owner_qq not in recipients:
             recipients.append(secondary_owner_qq)
         return recipients
+
+    def _is_primary_target_group(self, group_id: str) -> bool:
+        return bool(self.config.target_groups) and group_id == self.config.target_groups[0]
 
     async def send_text(self, bot: Bot, message: str, recipients: list[str] | None = None) -> None:
         target_recipients = recipients or await self._owner_recipients()
@@ -169,6 +181,9 @@ class NotifyService:
             f"原文：{task.raw_text}",
             f"发送时间：{task.sent_at.strftime('%Y-%m-%d %H:%M:%S') if task.sent_at else '未知'}",
         ]
+        response_interval = _format_claim_response_interval(task)
+        if task.task_kind == ApprovalTaskKind.CLAIM and response_interval:
+            lines.append(response_interval)
         if task.task_kind == ApprovalTaskKind.SWAP_MATCH:
             lines.insert(1, f"规则：{task.matched_rule_id or '未知'}")
             lines.insert(2, f"我可提供：{format_slot(task.matched_have_slot)}")
@@ -185,20 +200,27 @@ class NotifyService:
             if pending_auto_recall and pending_auto_recall.task_id == task.task_id
             else "当前无法撤回这条自动发送的 1"
         )
+        lines = [
+            "【自动模式已扣 1】",
+            f"群聊：{task.group_name} ({task.group_id})",
+            f"发送人：{task.sender_nickname} ({task.user_id})",
+            f"时间：{self._format_time_range(task.start_time, task.end_time, task.slot_date)}",
+            f"原文：{task.raw_text}",
+            f"发送时间：{task.sent_at.strftime('%Y-%m-%d %H:%M:%S') if task.sent_at else '未知'}",
+        ]
+        response_interval = _format_claim_response_interval(task)
+        if response_interval:
+            lines.append(response_interval)
+        lines.extend(
+            [
+                f"自动模式冷却：{_format_remaining(remaining)}",
+                recall_hint,
+            ]
+        )
         await self.send_text(
             bot,
-            "\n".join(
-                [
-                    "【自动模式已扣 1】",
-                    f"群聊：{task.group_name} ({task.group_id})",
-                    f"发送人：{task.sender_nickname} ({task.user_id})",
-                    f"时间：{self._format_time_range(task.start_time, task.end_time, task.slot_date)}",
-                    f"原文：{task.raw_text}",
-                    f"发送时间：{task.sent_at.strftime('%Y-%m-%d %H:%M:%S') if task.sent_at else '未知'}",
-                    f"自动模式冷却：{_format_remaining(remaining)}",
-                    recall_hint,
-                ]
-            ),
+            "\n".join(lines),
+            recipients=await self._owner_recipients(include_secondary=self._is_primary_target_group(task.group_id)),
         )
 
     async def send_auto_recall_result(self, bot: Bot, recall_task: AutoRecallTask) -> None:

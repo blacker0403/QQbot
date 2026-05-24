@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 import logging
 
-from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, AutoRecallTask, ClaimMode, PersistedState, ResolvedSlot, SwapWatchRule
+from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, AutoRecallTask, ClaimMode, DismissedClaimSlot, PersistedState, ResolvedSlot, SwapWatchRule, TemporaryClaimSlot
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +166,120 @@ class JsonStateStore:
         async with self._lock:
             self._state.secondary_owner_qq = qq
             self._write_to_disk()
+
+    async def claim_weather_alert_key(
+        self,
+        alert_key: str,
+        now: datetime | None = None,
+        keep_for: timedelta = timedelta(days=3),
+    ) -> bool:
+        now = now or datetime.now()
+        cutoff = now - keep_for
+        async with self._lock:
+            self._state.weather_alerts = {
+                key: sent_at
+                for key, sent_at in self._state.weather_alerts.items()
+                if sent_at >= cutoff
+            }
+            if alert_key in self._state.weather_alerts:
+                self._write_to_disk()
+                return False
+            self._state.weather_alerts[alert_key] = now
+            self._write_to_disk()
+            return True
+
+    async def save_temporary_claim_slot(
+        self,
+        slot: TemporaryClaimSlot,
+        now: datetime | None = None,
+    ) -> TemporaryClaimSlot | None:
+        now = now or datetime.now()
+        if slot.expires_at <= now:
+            return None
+        async with self._lock:
+            self._prune_temporary_claim_slots_locked(now)
+            signature = self._temporary_claim_slot_signature(slot)
+            self._state.temporary_claim_slots = [
+                existing
+                for existing in self._state.temporary_claim_slots
+                if self._temporary_claim_slot_signature(existing) != signature
+            ]
+            self._state.temporary_claim_slots.append(slot)
+            self._write_to_disk()
+            return slot
+
+    async def list_temporary_claim_slots(self, now: datetime | None = None) -> list[TemporaryClaimSlot]:
+        now = now or datetime.now()
+        async with self._lock:
+            changed = self._prune_temporary_claim_slots_locked(now)
+            if changed:
+                self._write_to_disk()
+            return sorted(
+                self._state.temporary_claim_slots,
+                key=lambda item: (item.date, item.start_time, item.end_time, item.created_at),
+            )
+
+    def _prune_temporary_claim_slots_locked(self, now: datetime) -> bool:
+        kept = [slot for slot in self._state.temporary_claim_slots if slot.expires_at > now]
+        if len(kept) == len(self._state.temporary_claim_slots):
+            return False
+        self._state.temporary_claim_slots = kept
+        return True
+
+    @staticmethod
+    def _temporary_claim_slot_signature(slot: TemporaryClaimSlot) -> tuple:
+        return (slot.date, slot.start_time, slot.end_time, slot.campus)
+
+    async def save_dismissed_claim_slot(
+        self,
+        slot: DismissedClaimSlot,
+        now: datetime | None = None,
+    ) -> DismissedClaimSlot | None:
+        now = now or datetime.now()
+        if slot.expires_at <= now:
+            return None
+        async with self._lock:
+            self._prune_dismissed_claim_slots_locked(now)
+            signature = self._dismissed_claim_slot_signature(slot)
+            self._state.dismissed_claim_slots = [
+                existing
+                for existing in self._state.dismissed_claim_slots
+                if self._dismissed_claim_slot_signature(existing) != signature
+            ]
+            self._state.dismissed_claim_slots.append(slot)
+            self._write_to_disk()
+            return slot
+
+    async def is_dismissed_claim_slot(self, slot: ResolvedSlot | None, now: datetime | None = None) -> bool:
+        if slot is None:
+            return False
+        now = now or datetime.now()
+        async with self._lock:
+            changed = self._prune_dismissed_claim_slots_locked(now)
+            if changed:
+                self._write_to_disk()
+            return any(self._dismissed_claim_slot_matches(existing, slot) for existing in self._state.dismissed_claim_slots)
+
+    def _prune_dismissed_claim_slots_locked(self, now: datetime) -> bool:
+        kept = [slot for slot in self._state.dismissed_claim_slots if slot.expires_at > now]
+        if len(kept) == len(self._state.dismissed_claim_slots):
+            return False
+        self._state.dismissed_claim_slots = kept
+        return True
+
+    @staticmethod
+    def _dismissed_claim_slot_signature(slot: DismissedClaimSlot) -> tuple:
+        return (slot.date, slot.start_time, slot.end_time, slot.campus)
+
+    @staticmethod
+    def _dismissed_claim_slot_matches(dismissed: DismissedClaimSlot, slot: ResolvedSlot) -> bool:
+        if dismissed.date != slot.date or dismissed.start_time != slot.start_time:
+            return False
+        if dismissed.end_time is not None and dismissed.end_time != slot.end_time:
+            return False
+        if dismissed.campus is not None and dismissed.campus != slot.campus:
+            return False
+        return True
 
     async def save_swap_watch_rule(self, rule: SwapWatchRule, now: datetime | None = None) -> SwapWatchRule | None:
         now = now or datetime.now()

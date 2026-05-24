@@ -58,6 +58,8 @@ NEGATIVE_PATTERNS = [
 ]
 
 OFFER_ACTION_RE = re.compile(r"(送|出|转)")
+LEADING_OFFER_ACTION_RE = re.compile(r"^\s*(送|出|转)")
+QUESTION_TAIL_RE = re.compile(r"(吗|嘛|么|不|\?|？)\s*$")
 QUESTION_MARKERS = ("吗", "？", "?", "求", "收", "问下")
 MORNING_MARKERS = ("早上", "上午", "清晨")
 EVENING_MARKERS = ("下午", "今晚", "明晚", "晚上", "傍晚", "晚")
@@ -207,6 +209,8 @@ class SemanticParseService:
         )
 
     async def verify_offer_with_llm(self, text: str, parsed: ParsedCandidate | None = None) -> bool | None:
+        if self._is_definitive_local_offer(text, parsed):
+            return True
         if self.minimax is None:
             return None
         try:
@@ -227,6 +231,21 @@ class SemanticParseService:
             and start_time is not None
             and start_time >= self.config.min_start_time_obj
         )
+
+    def _is_definitive_local_offer(self, text: str, parsed: ParsedCandidate | None) -> bool:
+        if parsed is None or not parsed.is_candidate:
+            return False
+        if parsed.start_time is None or parsed.end_time is None:
+            return False
+        if parsed.start_time < self.config.min_start_time_obj:
+            return False
+        if parsed.campus is not None and not self._is_target_campus(parsed.campus):
+            return False
+        if not LEADING_OFFER_ACTION_RE.search(text):
+            return False
+        if self._detect_intent(text) is False or QUESTION_TAIL_RE.search(text):
+            return False
+        return True
 
     def _build_offer_review_context(self, parsed: ParsedCandidate | None) -> dict:
         learned_rules = load_rules(self.config.self_learning.learned_rules_path)

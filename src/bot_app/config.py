@@ -70,6 +70,21 @@ class AvatarRotationConfig(BaseModel):
     )
 
 
+class WeatherAlertConfig(BaseModel):
+    enabled: bool = True
+    latitude: float = 31.887
+    longitude: float = 118.822
+    location_name: str = "南京九龙湖"
+    check_interval_minutes: float = Field(default=30.0, gt=0)
+    initial_delay_seconds: float = Field(default=60.0, ge=0)
+    rain_lead_hours: float = Field(default=2.0, gt=0)
+    rain_probability_threshold: int = Field(default=70, ge=0, le=100)
+    rain_precipitation_threshold_mm: float = Field(default=0.1, ge=0)
+    heavy_rain_threshold_mm: float = Field(default=8.0, ge=0)
+    temperature_change_window_hours: int = Field(default=3, gt=0)
+    temperature_change_threshold_c: float = Field(default=6.0, gt=0)
+
+
 class AppConfig(BaseModel):
     owner_qq: str
     secondary_owner_qq: str | None = None
@@ -86,6 +101,7 @@ class AppConfig(BaseModel):
     minimax: MiniMaxConfig = Field(default_factory=MiniMaxConfig)
     self_learning: SelfLearningConfig = Field(default_factory=SelfLearningConfig)
     avatar_rotation: AvatarRotationConfig = Field(default_factory=AvatarRotationConfig)
+    weather_alert: WeatherAlertConfig = Field(default_factory=WeatherAlertConfig)
 
     @property
     def min_start_time_obj(self) -> time:
@@ -109,6 +125,7 @@ def _apply_env_overrides(data: dict) -> dict:
     data.setdefault("minimax", {})
     data.setdefault("self_learning", {})
     data.setdefault("avatar_rotation", {})
+    data.setdefault("weather_alert", {})
     if ws_url := os.getenv("NAPCAT_WS_URL"):
         data["onebot"]["ws_url"] = ws_url
     if access_token := os.getenv("NAPCAT_ACCESS_TOKEN"):

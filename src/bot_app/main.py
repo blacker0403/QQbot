@@ -23,3 +23,4 @@ def bootstrap() -> None:
     load_plugin("bot_app.plugins.message_ingest")
     load_plugin("bot_app.plugins.private_commands")
     load_plugin("bot_app.plugins.avatar_rotation")
+    load_plugin("bot_app.plugins.weather_alert")

@@ -48,3 +48,17 @@ avatar_rotation:
   nickname_pool:
     - "Limerence"
     - "Petrichor"
+
+weather_alert:
+  enabled: true
+  latitude: 31.887
+  longitude: 118.822
+  location_name: "南京九龙湖"
+  check_interval_minutes: 30
+  initial_delay_seconds: 60
+  rain_lead_hours: 2
+  rain_probability_threshold: 70
+  rain_precipitation_threshold_mm: 0.1
+  heavy_rain_threshold_mm: 8
+  temperature_change_window_hours: 3
+  temperature_change_threshold_c: 6

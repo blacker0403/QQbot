@@ -62,6 +62,24 @@ class SwapWatchRule(BaseModel):
     enabled: bool = True
 
 
+class TemporaryClaimSlot(BaseModel):
+    date: str
+    start_time: str
+    end_time: str
+    campus: str | None = None
+    created_at: datetime
+    expires_at: datetime
+
+
+class DismissedClaimSlot(BaseModel):
+    date: str
+    start_time: str
+    end_time: str | None = None
+    campus: str | None = None
+    created_at: datetime
+    expires_at: datetime
+
+
 class ApprovalTask(BaseModel):
     task_id: str
     token: str
@@ -99,6 +117,7 @@ class AutoRecallTask(BaseModel):
     user_id: str
     sender_nickname: str
     raw_text: str
+    campus: str | None = None
     slot_date: str | None = None
     start_time: str | None = None
     end_time: str | None = None
@@ -113,6 +132,9 @@ class PersistedState(BaseModel):
     secondary_owner_qq: str | None = None
     tasks: dict[str, ApprovalTask] = Field(default_factory=dict)
     swap_watch_rules: dict[str, SwapWatchRule] = Field(default_factory=dict)
+    temporary_claim_slots: list[TemporaryClaimSlot] = Field(default_factory=list)
+    dismissed_claim_slots: list[DismissedClaimSlot] = Field(default_factory=list)
+    weather_alerts: dict[str, datetime] = Field(default_factory=dict)
 
 
 class LLMDecision(BaseModel):

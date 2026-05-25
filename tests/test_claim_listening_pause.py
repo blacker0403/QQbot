@@ -29,6 +29,11 @@ class _Matcher:
 
 nonebot = types.ModuleType("nonebot")
 nonebot.on_message = lambda *args, **kwargs: _Matcher()
+nonebot.get_driver = lambda: types.SimpleNamespace(
+    on_bot_connect=lambda func: func,
+    on_bot_disconnect=lambda func: func,
+    on_shutdown=lambda func: func,
+)
 sys.modules.setdefault("nonebot", nonebot)
 
 onebot_v11 = types.ModuleType("nonebot.adapters.onebot.v11")
@@ -42,7 +47,7 @@ sys.modules.setdefault("nonebot.adapters.onebot.v11", onebot_v11)
 from bot_app.config import AppConfig
 from bot_app.models import ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot
 import bot_app.plugins.private_commands as private_commands
-from bot_app.plugins.private_commands import _handle_stopclaim_command, _normalize_command
+from bot_app.plugins.private_commands import _handle_stopclaim_command, _handle_weather_command, _normalize_command
 from bot_app.runtime import build_runtime, set_runtime
 from bot_app.services.workflow import ClaimWorkflow
 from bot_app.storage import JsonStateStore
@@ -177,6 +182,23 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(command.name, "listen")
                 self.assertEqual(command.args, ["pause"])
 
+    def test_weather_command_aliases_map_to_weather(self) -> None:
+        cases = {
+            "/weather off": ["off"],
+            "/天气 开启": ["开启"],
+            "开启天气": ["on"],
+            "关闭天气": ["off"],
+            "天气状态": ["status"],
+        }
+        for text, args in cases.items():
+            with self.subTest(text=text):
+                command = _normalize_command(text)
+
+                self.assertIsNotNone(command)
+                assert command is not None
+                self.assertEqual(command.name, "weather")
+                self.assertEqual(command.args, args)
+
     def test_stopclaim_command_alias_maps_to_stopclaim(self) -> None:
         for text in ("/stopclaim 4-5", "/停止抢送 4-5"):
             with self.subTest(text=text):
@@ -222,6 +244,49 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("16:00-17:00", bot.private_messages[-1]["message"])
         finally:
             private_commands.datetime = original_datetime
+            shutil.rmtree(data_dir, ignore_errors=True)
+
+    async def test_weather_command_toggles_weather_alert_pause_state(self) -> None:
+        data_dir = Path(__file__).resolve().parents[1] / "data" / f"test-weather-command-{uuid.uuid4().hex}"
+        data_dir.mkdir(parents=True)
+        calls: list[str] = []
+
+        async def start_weather_alert_loop(bot) -> None:
+            calls.append("start")
+
+        async def stop_weather_alert_loop(bot) -> None:
+            calls.append("stop")
+
+        sys.modules["bot_app.plugins.weather_alert"] = types.SimpleNamespace(
+            start_weather_alert_loop=start_weather_alert_loop,
+            stop_weather_alert_loop=stop_weather_alert_loop,
+        )
+        try:
+            runtime = build_runtime(
+                AppConfig(
+                    owner_qq="10000",
+                    target_groups=["target-group"],
+                    target_campus_key="jiulonghu",
+                    campus_aliases={"jiulonghu": ["jiulonghu"]},
+                    storage_path=str(data_dir / "state.json"),
+                )
+            )
+            set_runtime(runtime)
+            bot = _PrivateBot()
+
+            await _handle_weather_command(bot, "10000", ["off"])
+
+            self.assertTrue(await runtime.store.is_weather_alert_paused())
+            self.assertEqual(calls, ["stop"])
+            self.assertIn("当前状态：已暂停", bot.private_messages[-1]["message"])
+
+            await _handle_weather_command(bot, "10000", ["on"])
+
+            self.assertFalse(await runtime.store.is_weather_alert_paused())
+            self.assertEqual(calls, ["stop", "start"])
+            self.assertIn("当前状态：运行中", bot.private_messages[-1]["message"])
+        finally:
+            sys.modules.pop("bot_app.plugins.weather_alert", None)
             shutil.rmtree(data_dir, ignore_errors=True)
 
     async def test_paused_claim_listening_ignores_offer_messages(self) -> None:

@@ -128,6 +128,7 @@ class PersistedState(BaseModel):
     last_claimed_at: datetime | None = None
     claim_mode: ClaimMode = ClaimMode.MANUAL
     claim_listening_paused: bool = False
+    weather_alert_paused: bool = False
     pending_auto_recall: AutoRecallTask | None = None
     secondary_owner_qq: str | None = None
     tasks: dict[str, ApprovalTask] = Field(default_factory=dict)

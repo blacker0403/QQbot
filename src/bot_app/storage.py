@@ -149,6 +149,15 @@ class JsonStateStore:
             self._state.claim_listening_paused = paused
             self._write_to_disk()
 
+    async def is_weather_alert_paused(self) -> bool:
+        async with self._lock:
+            return self._state.weather_alert_paused
+
+    async def set_weather_alert_paused(self, paused: bool) -> None:
+        async with self._lock:
+            self._state.weather_alert_paused = paused
+            self._write_to_disk()
+
     async def get_pending_auto_recall(self) -> AutoRecallTask | None:
         async with self._lock:
             return self._state.pending_auto_recall

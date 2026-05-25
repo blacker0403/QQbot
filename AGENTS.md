@@ -30,6 +30,7 @@ It runs a NoneBot2 + OneBot V11 bot against NapCat, watches configured QQ groups
 - Prefer existing services and models over new abstractions.
 - Match current Python style: small service classes, Pydantic models, async bot calls, JSON state files.
 - Add tests or focused checks when changing parsing, workflow decisions, self-learning, cooldown, confirmation, or swap matching.
+- After every repository modification, verify the change, commit it, push to GitHub, and sync the server deployment.
 
 ## Useful Entry Points
 

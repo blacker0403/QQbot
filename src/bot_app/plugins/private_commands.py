@@ -60,6 +60,9 @@ def _normalize_command(text: str) -> ParsedCommand | None:
         "恢复监听送场地": ParsedCommand(name="listen", args=["resume"]),
         "恢复送场": ParsedCommand(name="listen", args=["resume"]),
         "恢复送场地": ParsedCommand(name="listen", args=["resume"]),
+        "开启天气": ParsedCommand(name="weather", args=["on"]),
+        "关闭天气": ParsedCommand(name="weather", args=["off"]),
+        "天气状态": ParsedCommand(name="weather", args=["status"]),
     }
     if raw_name in direct_commands:
         return direct_commands[raw_name]
@@ -96,6 +99,8 @@ def _normalize_command(text: str) -> ParsedCommand | None:
         "selflearn": "selflearn",
         "avatar": "avatar",
         "头像": "avatar",
+        "weather": "weather",
+        "天气": "weather",
         "restart": "restart",
         "重启": "restart",
         "setsecondary": "setsecondary",
@@ -184,6 +189,10 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
 
     if command.name == "avatar":
         await _handle_avatar_command(bot, sender_id, command.args)
+        return
+
+    if command.name == "weather":
+        await _handle_weather_command(bot, sender_id, command.args)
         return
 
     if command.name == "restart":
@@ -589,6 +598,45 @@ async def _handle_avatar_command(bot: Bot, sender_id: str, args: list[str]) -> N
     if result.nickname:
         message += f"\n昵称已更新：{result.nickname}"
     await _reply_to_user(bot, sender_id, message)
+
+
+async def _handle_weather_command(bot: Bot, sender_id: str, args: list[str]) -> None:
+    runtime = get_runtime()
+    action = args[0].strip().lower() if args else "status"
+    action_map = {
+        "on": False,
+        "开启": False,
+        "开": False,
+        "enable": False,
+        "start": False,
+        "off": True,
+        "关闭": True,
+        "关": True,
+        "disable": True,
+        "stop": True,
+        "status": None,
+        "状态": None,
+    }
+    if action not in action_map:
+        await _reply_to_user(bot, sender_id, "切换失败：用法 /weather on 或 /weather off")
+        return
+
+    paused = action_map[action]
+    if paused is not None:
+        if paused:
+            await runtime.store.set_weather_alert_paused(True)
+            from bot_app.plugins.weather_alert import stop_weather_alert_loop
+
+            await stop_weather_alert_loop(bot)
+        elif not runtime.config.weather_alert.enabled:
+            await _reply_to_user(bot, sender_id, await _build_weather_message())
+            return
+        else:
+            await runtime.store.set_weather_alert_paused(False)
+            from bot_app.plugins.weather_alert import start_weather_alert_loop
+
+            await start_weather_alert_loop(bot)
+    await _reply_to_user(bot, sender_id, await _build_weather_message())
 
 
 async def _handle_selflearn_command(bot: Bot, sender_id: str, args: list[str]) -> None:
@@ -1081,6 +1129,7 @@ async def _build_status_message() -> str:
     secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
     claim_mode = await runtime.store.get_claim_mode()
     claim_listening_paused = await runtime.store.is_claim_listening_paused()
+    weather_alert_paused = await runtime.store.is_weather_alert_paused()
     cooldown_remaining = await runtime.cooldown.get_remaining()
     lines = [
         "【当前状态】",
@@ -1088,6 +1137,7 @@ async def _build_status_message() -> str:
         f"第二主人：{secondary_owner_qq or '未设置'}",
         f"送场监听：{'已暂停' if claim_listening_paused else '运行中'}",
         f"送场模式：{'自动' if claim_mode == ClaimMode.AUTO else '手动'}",
+        f"天气提醒：{_format_weather_status(runtime.config.weather_alert.enabled, weather_alert_paused)}",
         (
             f"自动冷却：剩余 {_format_remaining_text(cooldown_remaining.total_seconds())}"
             if cooldown_remaining.total_seconds() > 0
@@ -1116,6 +1166,7 @@ async def _build_health_message() -> str:
     swap_rules = await runtime.store.list_swap_watch_rules()
     claim_mode = await runtime.store.get_claim_mode()
     claim_listening_paused = await runtime.store.is_claim_listening_paused()
+    weather_alert_paused = await runtime.store.is_weather_alert_paused()
     cooldown_remaining = await runtime.cooldown.get_remaining()
     minimax_key = runtime.config.minimax.api_key or ""
     minimax_key_mask = (
@@ -1130,6 +1181,7 @@ async def _build_health_message() -> str:
             f"第二主人：{secondary_owner_qq or '未设置'}",
             f"送场监听：{'已暂停' if claim_listening_paused else '运行中'}",
             f"送场模式：{'自动' if claim_mode == ClaimMode.AUTO else '手动'}",
+            f"天气提醒：{_format_weather_status(runtime.config.weather_alert.enabled, weather_alert_paused)}",
             (
                 f"自动冷却：剩余 {_format_remaining_text(cooldown_remaining.total_seconds())}"
                 if cooldown_remaining.total_seconds() > 0
@@ -1236,6 +1288,29 @@ async def _build_secondary_message() -> str:
     )
 
 
+def _format_weather_status(config_enabled: bool, paused: bool) -> str:
+    if not config_enabled:
+        return "配置关闭"
+    return "已暂停" if paused else "运行中"
+
+
+async def _build_weather_message() -> str:
+    runtime = get_runtime()
+    config = runtime.config.weather_alert
+    paused = await runtime.store.is_weather_alert_paused()
+    lines = [
+        "【天气提醒】",
+        f"当前状态：{_format_weather_status(config.enabled, paused)}",
+        f"地点：{config.location_name}",
+        f"检查间隔：{config.check_interval_minutes:g} 分钟",
+    ]
+    if not config.enabled:
+        lines.append("配置文件 weather_alert.enabled=false，命令无法开启服务")
+    else:
+        lines.append("切换：/weather on 或 /weather off")
+    return "\n".join(lines)
+
+
 async def _build_swapwatch_list_message() -> str:
     runtime = get_runtime()
     rules = await runtime.store.list_swap_watch_rules()
@@ -1299,6 +1374,7 @@ def _build_help_message() -> str:
             "/pending: 查看全部待确认任务",
             "/mode [manual|auto]: 切换或查看送场监听模式",
             "/listen [pause|resume]: 暂停或恢复监听送场消息",
+            "/weather [on|off|status]: 开启、关闭或查看天气提醒",
             "也可直接发：暂停监听 / 恢复监听",
             "/cooldown: 查看自动模式冷却状态",
             "1 或 /1: 仅当只有 1 个待确认任务时，直接确认代发 1",

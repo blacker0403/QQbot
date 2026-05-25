@@ -18,7 +18,7 @@ _tasks: dict[str, asyncio.Task] = {}
 async def start_weather_alert_loop(bot: Bot) -> None:
     runtime = get_runtime()
     config = runtime.config.weather_alert
-    if not config.enabled:
+    if not config.enabled or await runtime.store.is_weather_alert_paused():
         return
 
     bot_id = str(getattr(bot, "self_id", "default"))
@@ -54,6 +54,9 @@ async def _run_weather_alert_loop(bot: Bot) -> None:
 
     while True:
         try:
+            if await runtime.store.is_weather_alert_paused():
+                await asyncio.sleep(max(60.0, config.check_interval_minutes * 60))
+                continue
             hours = await client.fetch_hourly()
             for alert in evaluate_weather_alerts(hours, config):
                 should_send = await runtime.store.claim_weather_alert_key(alert.key)

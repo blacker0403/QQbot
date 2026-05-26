@@ -9,7 +9,12 @@ import pytest
 
 from bot_app.config import AppConfig
 from bot_app.runtime import build_runtime
-from bot_app.services.weather_alert import WeatherHour, evaluate_weather_alerts, parse_open_meteo_hourly
+from bot_app.services.weather_alert import (
+    WeatherHour,
+    evaluate_weather_alerts,
+    is_weather_alert_quiet_time,
+    parse_open_meteo_hourly,
+)
 
 
 def _hours(start: datetime, temperatures: list[float]) -> list[WeatherHour]:
@@ -75,6 +80,19 @@ def test_likely_rain_alerts_within_two_hour_lead_only_for_today() -> None:
         "weather:rain-lead:2026052110"
     ]
     assert any("今天大概率会下雨" in alert.message for alert in alerts)
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (datetime(2026, 5, 21, 22, 59), False),
+        (datetime(2026, 5, 21, 23, 0), True),
+        (datetime(2026, 5, 22, 7, 59), True),
+        (datetime(2026, 5, 22, 8, 0), False),
+    ],
+)
+def test_weather_alert_quiet_time_between_23_and_8(now: datetime, expected: bool) -> None:
+    assert is_weather_alert_quiet_time(now) is expected
 
 
 @pytest.mark.asyncio

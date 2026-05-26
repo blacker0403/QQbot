@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import logging
 
 import httpx
@@ -11,6 +11,8 @@ from bot_app.config import WeatherAlertConfig
 logger = logging.getLogger(__name__)
 
 HEAVY_RAIN_CODES = {65, 82, 95, 96, 99}
+QUIET_START = time(23, 0)
+QUIET_END = time(8, 0)
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,11 @@ def evaluate_weather_alerts(
     alerts.extend(_heavy_rain_alerts(future_hours, config))
     alerts.extend(_rain_lead_alerts(future_hours, config, now))
     return alerts
+
+
+def is_weather_alert_quiet_time(now: datetime | None = None) -> bool:
+    current_time = (now or datetime.now()).time()
+    return current_time >= QUIET_START or current_time < QUIET_END
 
 
 def _temperature_alerts(hours: list[WeatherHour], config: WeatherAlertConfig) -> list[WeatherAlert]:

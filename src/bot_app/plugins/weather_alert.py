@@ -7,7 +7,11 @@ from nonebot import get_driver
 from nonebot.adapters.onebot.v11 import Bot
 
 from bot_app.runtime import get_runtime
-from bot_app.services.weather_alert import OpenMeteoWeatherClient, evaluate_weather_alerts
+from bot_app.services.weather_alert import (
+    OpenMeteoWeatherClient,
+    evaluate_weather_alerts,
+    is_weather_alert_quiet_time,
+)
 
 logger = logging.getLogger(__name__)
 driver = get_driver()
@@ -55,6 +59,9 @@ async def _run_weather_alert_loop(bot: Bot) -> None:
     while True:
         try:
             if await runtime.store.is_weather_alert_paused():
+                await asyncio.sleep(max(60.0, config.check_interval_minutes * 60))
+                continue
+            if is_weather_alert_quiet_time():
                 await asyncio.sleep(max(60.0, config.check_interval_minutes * 60))
                 continue
             hours = await client.fetch_hourly()

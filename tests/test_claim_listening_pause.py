@@ -45,7 +45,7 @@ onebot_v11.PrivateMessageEvent = object
 sys.modules.setdefault("nonebot.adapters.onebot.v11", onebot_v11)
 
 from bot_app.config import AppConfig
-from bot_app.models import ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot
+from bot_app.models import ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, TemporaryClaimSlot
 import bot_app.plugins.private_commands as private_commands
 from bot_app.plugins.private_commands import _handle_stopclaim_command, _handle_weather_command, _normalize_command
 from bot_app.runtime import build_runtime, set_runtime
@@ -97,6 +97,31 @@ class _SemanticNearStartWithoutEndParser(_SemanticNearStartParser):
 class _SlotParser:
     def parse_slot(self, text: str, reference_time: datetime):
         return None
+
+
+class _TemporaryClaimParser:
+    async def parse(self, text: str) -> ParsedCandidate:
+        return ParsedCandidate(
+            is_candidate=False,
+            campus="jiulonghu",
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            confidence=0.8,
+        )
+
+    def _detect_intent(self, text: str) -> bool:
+        return True
+
+    def _looks_like_question(self, text: str) -> bool:
+        return False
+
+    def _has_offer_action(self, text: str) -> bool:
+        return True
+
+
+class _TemporaryClaimSlotParser:
+    def parse_slot(self, text: str, reference_time: datetime):
+        return ResolvedSlot(date="2026-05-01", start_time="18:00", end_time="19:00", campus="jiulonghu")
 
 
 class _NearStartSlotParser:
@@ -164,6 +189,30 @@ class _PrivateBot:
 
     async def delete_msg(self, **kwargs):
         return {}
+
+
+class _GroupBot(_PrivateBot):
+    self_id = "20000"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.group_messages: list[dict] = []
+        self.deleted_messages: list[int | str] = []
+        self.next_message_id = 1000
+
+    async def send_group_msg(self, **kwargs):
+        self.next_message_id += 1
+        item = dict(kwargs)
+        item["message_id"] = self.next_message_id
+        self.group_messages.append(item)
+        return {"message_id": self.next_message_id}
+
+    async def delete_msg(self, **kwargs):
+        self.deleted_messages.append(kwargs["message_id"])
+        return {}
+
+    async def get_group_info(self, **kwargs):
+        return {"group_name": f"group-{kwargs['group_id']}"}
 
 
 def _make_test_store(name: str) -> tuple[JsonStateStore, Path]:
@@ -569,6 +618,56 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
                     now=expires_at + timedelta(seconds=1),
                 )
             )
+        finally:
+            shutil.rmtree(data_dir, ignore_errors=True)
+
+    async def test_temporary_claim_bypasses_auto_cooldown(self) -> None:
+        data_dir = Path(__file__).resolve().parents[1] / "data" / f"test-tempclaim-cooldown-{uuid.uuid4().hex}"
+        data_dir.mkdir(parents=True)
+        try:
+            runtime = build_runtime(
+                AppConfig(
+                    owner_qq="10000",
+                    target_groups=["target-group"],
+                    target_campus_key="jiulonghu",
+                    campus_aliases={"jiulonghu": ["jiulonghu"]},
+                    storage_path=str(data_dir / "state.json"),
+                )
+            )
+            set_runtime(runtime)
+            runtime.workflow.prefilter = _MatchingPrefilter()
+            runtime.workflow.parser = _TemporaryClaimParser()
+            runtime.workflow.slot_parser = _TemporaryClaimSlotParser()
+
+            now = datetime(2026, 5, 1, 16, 0, 0)
+            await runtime.store.set_claim_mode(ClaimMode.AUTO)
+            await runtime.store.save_temporary_claim_slot(
+                TemporaryClaimSlot(
+                    date="2026-05-01",
+                    start_time="18:00",
+                    end_time="19:00",
+                    campus="jiulonghu",
+                    created_at=now,
+                    expires_at=datetime(2026, 5, 2, 0, 0, 0),
+                ),
+                now=now,
+            )
+            await runtime.cooldown.mark_claimed(datetime(2026, 5, 1, 15, 0, 0))
+            bot = _GroupBot()
+
+            await runtime.workflow.handle_group_message(
+                bot=bot,
+                incoming=IncomingGroupMessage(
+                    group_id="target-group",
+                    user_id="30000",
+                    message_id="temp-claim-cooldown",
+                    nickname="sender",
+                    raw_text="送6-7",
+                    timestamp=now,
+                ),
+            )
+
+            self.assertEqual([item["message"] for item in bot.group_messages], ["1"])
         finally:
             shutil.rmtree(data_dir, ignore_errors=True)
 

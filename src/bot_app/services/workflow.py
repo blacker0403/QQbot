@@ -210,7 +210,7 @@ class ClaimWorkflow:
         temporary_claim: bool = False,
     ) -> None:
         mode = await self.store.get_claim_mode()
-        if mode == ClaimMode.AUTO:
+        if mode == ClaimMode.AUTO and not temporary_claim:
             remaining = await self.cooldown.get_remaining(incoming.timestamp)
             if remaining.total_seconds() > 0:
                 await self.notifier.send_cooldown_notice(

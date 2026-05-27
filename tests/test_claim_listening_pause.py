@@ -45,7 +45,7 @@ onebot_v11.PrivateMessageEvent = object
 sys.modules.setdefault("nonebot.adapters.onebot.v11", onebot_v11)
 
 from bot_app.config import AppConfig
-from bot_app.models import ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, TemporaryClaimSlot
+from bot_app.models import AutoRecallTask, ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, TemporaryClaimSlot
 import bot_app.plugins.private_commands as private_commands
 from bot_app.plugins.private_commands import _handle_stopclaim_command, _handle_weather_command, _normalize_command
 from bot_app.runtime import build_runtime, set_runtime
@@ -640,6 +640,7 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
             runtime.workflow.slot_parser = _TemporaryClaimSlotParser()
 
             now = datetime(2026, 5, 1, 16, 0, 0)
+            original_claimed_at = datetime(2026, 5, 1, 15, 0, 0)
             await runtime.store.set_claim_mode(ClaimMode.AUTO)
             await runtime.store.save_temporary_claim_slot(
                 TemporaryClaimSlot(
@@ -652,7 +653,22 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 now=now,
             )
-            await runtime.cooldown.mark_claimed(datetime(2026, 5, 1, 15, 0, 0))
+            await runtime.cooldown.mark_claimed(original_claimed_at)
+            original_recall = AutoRecallTask(
+                task_id="normal-auto-task",
+                group_id="target-group",
+                group_name="group-target-group",
+                sent_message_id="9876",
+                user_id="30001",
+                sender_nickname="existing-sender",
+                raw_text="normal auto claim",
+                campus="jiulonghu",
+                slot_date="2026-05-01",
+                start_time="20:00",
+                end_time="21:00",
+                sent_at=datetime(2026, 5, 1, 15, 0, 5),
+            )
+            await runtime.store.set_pending_auto_recall(original_recall)
             bot = _GroupBot()
 
             await runtime.workflow.handle_group_message(
@@ -668,6 +684,8 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual([item["message"] for item in bot.group_messages], ["1"])
+            self.assertEqual(await runtime.store.get_last_claimed_at(), original_claimed_at)
+            self.assertEqual(await runtime.store.get_pending_auto_recall(), original_recall)
         finally:
             shutil.rmtree(data_dir, ignore_errors=True)
 

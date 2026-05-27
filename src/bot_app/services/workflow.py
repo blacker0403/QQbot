@@ -210,7 +210,8 @@ class ClaimWorkflow:
         temporary_claim: bool = False,
     ) -> None:
         mode = await self.store.get_claim_mode()
-        if mode == ClaimMode.AUTO and not temporary_claim:
+        manages_auto_state = mode == ClaimMode.AUTO and not temporary_claim
+        if manages_auto_state:
             remaining = await self.cooldown.get_remaining(incoming.timestamp)
             if remaining.total_seconds() > 0:
                 await self.notifier.send_cooldown_notice(
@@ -236,15 +237,17 @@ class ClaimWorkflow:
             await self.notifier.send_candidate_notice(bot, incoming, parsed, task)
             return
 
-        await self.cooldown.mark_claimed(incoming.timestamp)
+        if manages_auto_state:
+            await self.cooldown.mark_claimed(incoming.timestamp)
         await asyncio.sleep(1)
         try:
             send_result = await bot.send_group_msg(group_id=_ob_id(task.group_id), message=task.reply_text)
         except Exception as exc:
             logger.exception("Failed to auto-send claim message for task %s", task.task_id)
             await self.approval.mark_failed(task, str(exc))
-            await self.cooldown.reset()
-            await self.store.set_pending_auto_recall(None)
+            if manages_auto_state:
+                await self.cooldown.reset()
+                await self.store.set_pending_auto_recall(None)
             await self.notifier.send_failure_result(
                 bot,
                 "\n".join(
@@ -263,7 +266,7 @@ class ClaimWorkflow:
 
         updated = await self.approval.mark_sent(task, datetime.now())
         sent_message_id = _extract_sent_message_id(send_result)
-        if sent_message_id is not None:
+        if manages_auto_state and sent_message_id is not None:
             await self.store.set_pending_auto_recall(
                 AutoRecallTask(
                     task_id=updated.task_id,
@@ -280,9 +283,9 @@ class ClaimWorkflow:
                     sent_at=updated.sent_at or datetime.now(),
                 )
             )
-        else:
+        elif manages_auto_state:
             await self.store.set_pending_auto_recall(None)
-        if not temporary_claim and await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
+        if manages_auto_state and await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
             return
         await self.notifier.send_auto_claim_result(bot, updated, await self.cooldown.get_remaining(updated.sent_at))
 

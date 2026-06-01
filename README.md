@@ -41,16 +41,12 @@ The real `config.yaml` and runtime `data/*.json` files are also intentionally ig
 
 Use this order for production updates:
 
-```bash
-# local machine
-git push origin main
-
-# server
-cd /opt/Linux_bot_repo
-git pull --ff-only origin main
-./scripts/deploy_to_runtime.sh /opt/Linux_bot
-sudo systemctl restart qqbot
+```powershell
+# local machine, from this repository
+.\scripts\sync_production.ps1
 ```
+
+`sync_production.ps1` retries flaky network steps, tries GitHub SSH over port 443 when the normal remote push fails, and falls back to a git bundle deployment over SSH when GitHub cannot be reached. The bundle fallback keeps the Alibaba Cloud runtime deployable even if GitHub is temporarily blocked; rerun the script later to finish GitHub sync.
 
 `deploy_to_runtime.sh` copies code from the GitHub checkout into `/opt/Linux_bot` but preserves `/opt/Linux_bot/.env`, `/opt/Linux_bot/config.yaml`, `/opt/Linux_bot/.venv`, `/opt/Linux_bot/data`, and logs.
 

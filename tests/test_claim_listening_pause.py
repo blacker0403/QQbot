@@ -642,6 +642,7 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
             now = datetime(2026, 5, 1, 16, 0, 0)
             original_claimed_at = datetime(2026, 5, 1, 15, 0, 0)
             await runtime.store.set_claim_mode(ClaimMode.AUTO)
+            await runtime.store.set_claim_listening_paused(True)
             await runtime.store.save_temporary_claim_slot(
                 TemporaryClaimSlot(
                     date="2026-05-01",

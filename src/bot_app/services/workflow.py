@@ -74,14 +74,14 @@ class ClaimWorkflow:
 
         group_name: str | None = None
 
-        if await self.store.is_claim_listening_paused():
-            logger.info("Skipped claim listening for message %s because listening is paused", incoming.message_id)
-        elif self.prefilter.match(incoming.raw_text):
+        if self.prefilter.match(incoming.raw_text):
             parsed = await self.parser.parse(incoming.raw_text)
             slot = self.slot_parser.parse_slot(incoming.raw_text, incoming.timestamp)
             temporary_slot = slot or self._slot_from_parsed(incoming, parsed)
             temporary_claim = await self._matches_temporary_claim_slot(incoming, parsed, temporary_slot)
-            if parsed.is_candidate or temporary_claim:
+            if await self.store.is_claim_listening_paused() and not temporary_claim:
+                logger.info("Skipped claim listening for message %s because listening is paused", incoming.message_id)
+            elif parsed.is_candidate or temporary_claim:
                 slot_for_checks = (
                     None
                     if not temporary_claim and self._looks_like_question(incoming.raw_text)

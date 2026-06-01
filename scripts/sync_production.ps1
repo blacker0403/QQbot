@@ -92,6 +92,19 @@ function Invoke-WithGitSshCommand {
     }
 }
 
+function ConvertTo-BashSingleQuoted {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    return "'" + ($Value -replace "'", "'\''") + "'"
+}
+
+function Invoke-RemoteCommand {
+    param([Parameter(Mandatory = $true)][string]$Command)
+
+    $quotedCommand = ConvertTo-BashSingleQuoted -Value $Command
+    Invoke-CheckedCommand -File "ssh" -Arguments @($Server, "bash -lc $quotedCommand")
+}
+
 function Assert-CleanTrackedWorktree {
     $status = (& git status --short --untracked-files=no)
     if ($LASTEXITCODE -ne 0) {
@@ -133,7 +146,7 @@ function Push-GitHub {
 function Invoke-ServerDeployFromGitHub {
     $remoteCommand = "cd $ServerRepo && git fetch origin $Branch && git merge --ff-only origin/$Branch && ./scripts/deploy_to_runtime.sh $RuntimeDir && systemctl restart $ServiceName && systemctl is-active $ServiceName && git rev-parse HEAD"
     return Invoke-WithRetry -Name "server deploy from GitHub" -Action {
-        Invoke-CheckedCommand -File "ssh" -Arguments @($Server, $remoteCommand)
+        Invoke-RemoteCommand -Command $remoteCommand
     }
 }
 
@@ -167,7 +180,7 @@ function Invoke-ServerDeployFromBundle {
 
     $remoteCommand = "cd $ServerRepo && git fetch $remoteBundle $Branch && git merge --ff-only FETCH_HEAD && ./scripts/deploy_to_runtime.sh $RuntimeDir && systemctl restart $ServiceName && systemctl is-active $ServiceName && git rev-parse HEAD"
     return Invoke-WithRetry -Name "server deploy from bundle" -Action {
-        Invoke-CheckedCommand -File "ssh" -Arguments @($Server, $remoteCommand)
+        Invoke-RemoteCommand -Command $remoteCommand
     }
 }
 

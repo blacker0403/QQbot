@@ -1045,6 +1045,19 @@ async def _cancel_task(bot: Bot, sender_id: str, token: str) -> None:
 
 async def _try_recall_latest_auto_claim(bot: Bot, sender_id: str) -> bool:
     runtime = get_runtime()
+    temporary_recall = await runtime.store.get_pending_temporary_recall()
+    if temporary_recall is not None:
+        try:
+            await bot.delete_msg(message_id=int(temporary_recall.sent_message_id))
+        except Exception as exc:
+            await runtime.store.set_pending_temporary_recall(None)
+            await _reply_to_user(bot, sender_id, f"撤回失败：临时抢场自动发送的 1 无法撤回：{exc}")
+            return True
+
+        await runtime.store.set_pending_temporary_recall(None)
+        await runtime.notifier.send_auto_recall_result(bot, temporary_recall)
+        return True
+
     recall_task = await runtime.store.get_pending_auto_recall()
     if recall_task is None:
         return False

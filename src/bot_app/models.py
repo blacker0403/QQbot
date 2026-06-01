@@ -130,6 +130,7 @@ class PersistedState(BaseModel):
     claim_listening_paused: bool = False
     weather_alert_paused: bool = False
     pending_auto_recall: AutoRecallTask | None = None
+    pending_temporary_recall: AutoRecallTask | None = None
     secondary_owner_qq: str | None = None
     tasks: dict[str, ApprovalTask] = Field(default_factory=dict)
     swap_watch_rules: dict[str, SwapWatchRule] = Field(default_factory=dict)

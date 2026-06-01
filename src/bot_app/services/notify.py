@@ -195,9 +195,11 @@ class NotifyService:
 
     async def send_auto_claim_result(self, bot: Bot, task: ApprovalTask, remaining: timedelta) -> None:
         pending_auto_recall = await self.store.get_pending_auto_recall()
+        pending_temporary_recall = await self.store.get_pending_temporary_recall()
         recall_hint = (
             "如需撤回刚刚自动发送的 1，请直接回复 0"
-            if pending_auto_recall and pending_auto_recall.task_id == task.task_id
+            if (pending_auto_recall and pending_auto_recall.task_id == task.task_id)
+            or (pending_temporary_recall and pending_temporary_recall.task_id == task.task_id)
             else "当前无法撤回这条自动发送的 1"
         )
         lines = [

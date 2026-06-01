@@ -167,6 +167,15 @@ class JsonStateStore:
             self._state.pending_auto_recall = recall_task
             self._write_to_disk()
 
+    async def get_pending_temporary_recall(self) -> AutoRecallTask | None:
+        async with self._lock:
+            return self._state.pending_temporary_recall
+
+    async def set_pending_temporary_recall(self, recall_task: AutoRecallTask | None) -> None:
+        async with self._lock:
+            self._state.pending_temporary_recall = recall_task
+            self._write_to_disk()
+
     async def get_secondary_owner_qq(self) -> str | None:
         async with self._lock:
             return self._state.secondary_owner_qq

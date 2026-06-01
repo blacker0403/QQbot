@@ -266,25 +266,30 @@ class ClaimWorkflow:
 
         updated = await self.approval.mark_sent(task, datetime.now())
         sent_message_id = _extract_sent_message_id(send_result)
-        if manages_auto_state and sent_message_id is not None:
-            await self.store.set_pending_auto_recall(
-                AutoRecallTask(
-                    task_id=updated.task_id,
-                    group_id=updated.group_id,
-                    group_name=updated.group_name,
-                    sent_message_id=sent_message_id,
-                    user_id=updated.user_id,
-                    sender_nickname=updated.sender_nickname,
-                    raw_text=updated.raw_text,
-                    campus=updated.campus,
-                    slot_date=updated.slot_date,
-                    start_time=updated.start_time,
-                    end_time=updated.end_time,
-                    sent_at=updated.sent_at or datetime.now(),
-                )
+        recall_task = (
+            AutoRecallTask(
+                task_id=updated.task_id,
+                group_id=updated.group_id,
+                group_name=updated.group_name,
+                sent_message_id=sent_message_id,
+                user_id=updated.user_id,
+                sender_nickname=updated.sender_nickname,
+                raw_text=updated.raw_text,
+                campus=updated.campus,
+                slot_date=updated.slot_date,
+                start_time=updated.start_time,
+                end_time=updated.end_time,
+                sent_at=updated.sent_at or datetime.now(),
             )
+            if sent_message_id is not None
+            else None
+        )
+        if manages_auto_state and recall_task is not None:
+            await self.store.set_pending_auto_recall(recall_task)
         elif manages_auto_state:
             await self.store.set_pending_auto_recall(None)
+        elif temporary_claim:
+            await self.store.set_pending_temporary_recall(recall_task)
         if manages_auto_state and await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
             return
         await self.notifier.send_auto_claim_result(bot, updated, await self.cooldown.get_remaining(updated.sent_at))

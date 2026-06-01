@@ -47,7 +47,7 @@ sys.modules.setdefault("nonebot.adapters.onebot.v11", onebot_v11)
 from bot_app.config import AppConfig
 from bot_app.models import AutoRecallTask, ClaimMode, DismissedClaimSlot, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, TemporaryClaimSlot
 import bot_app.plugins.private_commands as private_commands
-from bot_app.plugins.private_commands import _handle_stopclaim_command, _handle_weather_command, _normalize_command
+from bot_app.plugins.private_commands import _handle_stopclaim_command, _handle_weather_command, _normalize_command, _try_recall_latest_auto_claim
 from bot_app.runtime import build_runtime, set_runtime
 from bot_app.services.workflow import ClaimWorkflow
 from bot_app.storage import JsonStateStore
@@ -687,6 +687,17 @@ class ClaimListeningPauseTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([item["message"] for item in bot.group_messages], ["1"])
             self.assertEqual(await runtime.store.get_last_claimed_at(), original_claimed_at)
             self.assertEqual(await runtime.store.get_pending_auto_recall(), original_recall)
+            temporary_recall = await runtime.store.get_pending_temporary_recall()
+            self.assertIsNotNone(temporary_recall)
+            assert temporary_recall is not None
+            self.assertEqual(temporary_recall.sent_message_id, "1001")
+
+            self.assertTrue(await _try_recall_latest_auto_claim(bot, "10000"))
+
+            self.assertEqual(bot.deleted_messages, [1001])
+            self.assertEqual(await runtime.store.get_last_claimed_at(), original_claimed_at)
+            self.assertEqual(await runtime.store.get_pending_auto_recall(), original_recall)
+            self.assertIsNone(await runtime.store.get_pending_temporary_recall())
         finally:
             shutil.rmtree(data_dir, ignore_errors=True)
 

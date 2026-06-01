@@ -57,17 +57,17 @@ function Get-OriginUrl {
     return $url
 }
 
-function Get-GitHubSsh443Url {
+function Get-GitHubSsh443Target {
     param([Parameter(Mandatory = $true)][string]$OriginUrl)
 
     if ($OriginUrl -match "^ssh://git@github\.com/(.+)$") {
-        return "ssh://git@ssh.github.com:443/$($Matches[1])"
+        return "git@ssh.github.com:$($Matches[1])"
     }
     if ($OriginUrl -match "^git@github\.com:(.+)$") {
-        return "ssh://git@ssh.github.com:443/$($Matches[1])"
+        return "git@ssh.github.com:$($Matches[1])"
     }
     if ($OriginUrl -match "^https://github\.com/(.+)$") {
-        return "ssh://git@ssh.github.com:443/$($Matches[1])"
+        return "git@ssh.github.com:$($Matches[1])"
     }
 
     return $null
@@ -92,17 +92,10 @@ function Invoke-WithGitSshCommand {
     }
 }
 
-function ConvertTo-BashSingleQuoted {
-    param([Parameter(Mandatory = $true)][string]$Value)
-
-    return "'" + ($Value -replace "'", "'\''") + "'"
-}
-
 function Invoke-RemoteCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
 
-    $quotedCommand = ConvertTo-BashSingleQuoted -Value $Command
-    Invoke-CheckedCommand -File "ssh" -Arguments @($Server, "bash -lc $quotedCommand")
+    Invoke-CheckedCommand -File "ssh" -Arguments @($Server, $Command)
 }
 
 function Assert-CleanTrackedWorktree {
@@ -122,7 +115,7 @@ function Push-GitHub {
     }
 
     $originUrl = Get-OriginUrl
-    $ssh443Url = Get-GitHubSsh443Url -OriginUrl $originUrl
+    $ssh443Target = Get-GitHubSsh443Target -OriginUrl $originUrl
 
     $pushed = Invoke-WithRetry -Name "git push origin" -Action {
         Invoke-CheckedCommand -File "git" -Arguments @("push", "origin", $Branch)
@@ -131,14 +124,14 @@ function Push-GitHub {
         return $true
     }
 
-    if ($null -eq $ssh443Url) {
+    if ($null -eq $ssh443Target) {
         Write-Warning "Cannot derive GitHub SSH-over-443 URL from origin: $originUrl"
         return $false
     }
 
     return Invoke-WithRetry -Name "git push ssh.github.com:443" -Action {
-        Invoke-WithGitSshCommand -Value "ssh -o StrictHostKeyChecking=accept-new" -Action {
-            Invoke-CheckedCommand -File "git" -Arguments @("push", $ssh443Url, $Branch)
+        Invoke-WithGitSshCommand -Value "ssh -p 443 -o StrictHostKeyChecking=accept-new" -Action {
+            Invoke-CheckedCommand -File "git" -Arguments @("push", $ssh443Target, $Branch)
         }
     }
 }
@@ -202,6 +195,14 @@ if ($githubPushed) {
 
 if (-not $deployed) {
     throw "server deployment failed"
+}
+
+$serverHead = (& ssh $Server "cd $ServerRepo && git rev-parse HEAD").Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to verify server HEAD"
+}
+if ($serverHead -ne $head) {
+    throw "server HEAD is $serverHead, expected $head"
 }
 
 if (-not $githubPushed) {

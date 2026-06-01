@@ -6,6 +6,8 @@ param(
     [string]$ServiceName = "qqbot",
     [int]$Retries = 5,
     [int]$DelaySeconds = 5,
+    [string]$SshExe = "C:\Windows\System32\OpenSSH\ssh.exe",
+    [string]$ScpExe = "C:\Windows\System32\OpenSSH\scp.exe",
     [switch]$SkipGithub,
     [switch]$NoBundleFallback
 )
@@ -92,10 +94,28 @@ function Invoke-WithGitSshCommand {
     }
 }
 
+function Get-GitSshCommand {
+    param([string[]]$ExtraOptions = @())
+
+    $parts = @(
+        "`"$SshExe`"",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=20",
+        "-o", "ServerAliveInterval=10",
+        "-o", "ServerAliveCountMax=3"
+    ) + $ExtraOptions
+    return $parts -join " "
+}
+
 function Invoke-RemoteCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
 
-    Invoke-CheckedCommand -File "ssh" -Arguments @($Server, $Command)
+    Invoke-CheckedCommand -File $SshExe -Arguments @(
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=20",
+        $Server,
+        $Command
+    )
 }
 
 function Assert-CleanTrackedWorktree {
@@ -118,7 +138,9 @@ function Push-GitHub {
     $ssh443Target = Get-GitHubSsh443Target -OriginUrl $originUrl
 
     $pushed = Invoke-WithRetry -Name "git push origin" -Action {
-        Invoke-CheckedCommand -File "git" -Arguments @("push", "origin", $Branch)
+        Invoke-WithGitSshCommand -Value (Get-GitSshCommand) -Action {
+            Invoke-CheckedCommand -File "git" -Arguments @("push", "origin", $Branch)
+        }
     }
     if ($pushed) {
         return $true
@@ -130,7 +152,7 @@ function Push-GitHub {
     }
 
     return Invoke-WithRetry -Name "git push ssh.github.com:443" -Action {
-        Invoke-WithGitSshCommand -Value "ssh -p 443 -o StrictHostKeyChecking=accept-new" -Action {
+        Invoke-WithGitSshCommand -Value (Get-GitSshCommand -ExtraOptions @("-p", "443", "-o", "StrictHostKeyChecking=accept-new")) -Action {
             Invoke-CheckedCommand -File "git" -Arguments @("push", $ssh443Target, $Branch)
         }
     }
@@ -165,7 +187,12 @@ function Invoke-ServerDeployFromBundle {
     Invoke-CheckedCommand -File "git" -Arguments @("bundle", "create", $bundlePath, $Branch)
 
     $copied = Invoke-WithRetry -Name "copy bundle to server" -Action {
-        Invoke-CheckedCommand -File "scp" -Arguments @($bundlePath, "$Server`:$remoteBundle")
+        Invoke-CheckedCommand -File $ScpExe -Arguments @(
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=20",
+            $bundlePath,
+            "$Server`:$remoteBundle"
+        )
     }
     if (-not $copied) {
         return $false
@@ -197,7 +224,7 @@ if (-not $deployed) {
     throw "server deployment failed"
 }
 
-$serverHead = (& ssh $Server "cd $ServerRepo && git rev-parse HEAD").Trim()
+$serverHead = (& $SshExe -o BatchMode=yes -o ConnectTimeout=20 $Server "cd $ServerRepo && git rev-parse HEAD").Trim()
 if ($LASTEXITCODE -ne 0) {
     throw "failed to verify server HEAD"
 }

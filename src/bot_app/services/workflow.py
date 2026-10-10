@@ -61,6 +61,7 @@ class ClaimWorkflow:
         self.approval = approval
         self.cooldown = cooldown
         self.notifier = notifier
+        self.claim_lock = asyncio.Lock()
         self._recent_claims_by_group: dict[str, list[tuple[datetime, str, str]]] = {}
 
     async def handle_group_message(self, bot: Bot, incoming: IncomingGroupMessage) -> None:
@@ -209,6 +210,25 @@ class ClaimWorkflow:
         slot_date: str | None,
         temporary_claim: bool = False,
     ) -> None:
+        async with self.claim_lock:
+            await self._handle_claim_candidate_locked(bot, incoming, group_name, parsed, slot_date, temporary_claim)
+
+    async def _handle_claim_candidate_locked(
+        self,
+        bot: Bot,
+        incoming: IncomingGroupMessage,
+        group_name: str,
+        parsed,
+        slot_date: str | None,
+        temporary_claim: bool = False,
+    ) -> None:
+        if await self.store.is_claimed_slot(
+            slot_date,
+            parsed.start_time.strftime("%H:%M") if parsed.start_time else None,
+            parsed.end_time.strftime("%H:%M") if parsed.end_time else None,
+        ):
+            logger.info("Skipped claim for message %s because the slot was already claimed", incoming.message_id)
+            return
         mode = await self.store.get_claim_mode()
         manages_auto_state = mode == ClaimMode.AUTO and not temporary_claim
         if manages_auto_state:

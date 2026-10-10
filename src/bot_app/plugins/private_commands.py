@@ -1000,6 +1000,12 @@ async def _reply_saved_swap_rule(bot: Bot, sender_id: str, rule_id: str, now: da
 
 async def _confirm_task(bot: Bot, sender_id: str, token: str) -> None:
     runtime = get_runtime()
+    async with runtime.workflow.claim_lock:
+        await _confirm_task_locked(bot, sender_id, token)
+
+
+async def _confirm_task_locked(bot: Bot, sender_id: str, token: str) -> None:
+    runtime = get_runtime()
     task, claimed = await runtime.store.claim_pending_task_by_token(token)
     if task is None:
         await _reply_to_user(bot, sender_id, f"确认失败：未找到确认码 {token}")
@@ -1010,6 +1016,13 @@ async def _confirm_task(bot: Bot, sender_id: str, token: str) -> None:
             await _reply_to_user(bot, sender_id, f"确认失败：确认码 {token} 已被另一主人处理")
             return
         await _reply_to_user(bot, sender_id, f"确认失败：确认码 {token} 当前状态为 {task.status}")
+        return
+
+    if task.task_kind == ApprovalTaskKind.CLAIM and await runtime.store.is_claimed_slot(
+        task.slot_date, task.start_time, task.end_time,
+    ):
+        await runtime.approval.cancel(task)
+        await _reply_to_user(bot, sender_id, "已取消：同一日期、同一时间段已经抢送过，本次不再代发 1")
         return
 
     if task.task_kind == ApprovalTaskKind.CLAIM and runtime.workflow.has_later_group_claim(task):

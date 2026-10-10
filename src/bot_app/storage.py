@@ -99,6 +99,17 @@ class JsonStateStore:
                 result.append(task)
         return sorted(result, key=lambda item: item.created_at)
 
+    async def is_claimed_slot(self, slot_date: str | None, start_time: str | None, end_time: str | None) -> bool:
+        if slot_date is None or start_time is None or end_time is None:
+            return False
+        async with self._lock:
+            return any(
+                task.task_kind == ApprovalTaskKind.CLAIM
+                and task.status == ApprovalTaskStatus.SENT
+                and (task.slot_date, task.start_time, task.end_time) == (slot_date, start_time, end_time)
+                for task in self._state.tasks.values()
+            )
+
     async def expire_overdue_tasks(self, now: datetime | None = None) -> list[ApprovalTask]:
         now = now or datetime.now()
         expired: list[ApprovalTask] = []

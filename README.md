@@ -37,6 +37,8 @@ The real `.env` is intentionally ignored by Git.
 
 The real `config.yaml` and runtime `data/*.json` files are also intentionally ignored by Git because they contain QQ IDs, group IDs, learned rules, and live state.
 
+Normal auto claims retain the global 24-hour cooldown. A successfully sent claim also blocks the same court date and exact start/end time across all monitored groups, including temporary claims and manual confirmations. This check uses persisted sent tasks, so it survives restarts and cooldown resets. Failed sends and claims rejected by LLM review do not block retries.
+
 ## Sync flow
 
 Use this order for production updates:

@@ -54,9 +54,6 @@ class NotifyService:
             recipients.append(secondary_owner_qq)
         return recipients
 
-    def _is_primary_target_group(self, group_id: str) -> bool:
-        return bool(self.config.target_groups) and group_id == self.config.target_groups[0]
-
     async def send_text(self, bot: Bot, message: str, recipients: list[str] | None = None) -> None:
         target_recipients = recipients or await self._owner_recipients()
         sent_count = 0
@@ -222,7 +219,6 @@ class NotifyService:
         await self.send_text(
             bot,
             "\n".join(lines),
-            recipients=await self._owner_recipients(include_secondary=self._is_primary_target_group(task.group_id)),
         )
 
     async def send_auto_recall_result(self, bot: Bot, recall_task: AutoRecallTask) -> None:

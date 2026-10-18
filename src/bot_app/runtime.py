@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from bot_app.config import AppConfig
 from bot_app.services.approval import ApprovalService
 from bot_app.services.cooldown import CooldownService
+from bot_app.services.court_handoff import CourtHandoffService
 from bot_app.services.exchange_parse import ExchangeParseService
 from bot_app.services.minimax import MiniMaxProvider
 from bot_app.services.notify import NotifyService
@@ -27,6 +28,7 @@ class AppRuntime:
     approval: ApprovalService
     cooldown: CooldownService
     notifier: NotifyService
+    court_handoff: CourtHandoffService
     workflow: ClaimWorkflow
     self_learning: SelfLearningService
 
@@ -64,6 +66,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     approval = ApprovalService(config, store)
     cooldown = CooldownService(config, store)
     notifier = NotifyService(config, store)
+    court_handoff = CourtHandoffService(config, store, minimax)
     workflow = ClaimWorkflow(
         config=config,
         store=store,
@@ -74,6 +77,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         approval=approval,
         cooldown=cooldown,
         notifier=notifier,
+        court_handoff=court_handoff,
     )
     self_learning = SelfLearningService(config, workflow)
     runtime = AppRuntime(
@@ -86,6 +90,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         approval=approval,
         cooldown=cooldown,
         notifier=notifier,
+        court_handoff=court_handoff,
         workflow=workflow,
         self_learning=self_learning,
     )

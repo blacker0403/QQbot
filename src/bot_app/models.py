@@ -47,6 +47,33 @@ class ClaimMode(str, Enum):
     AUTO = "auto"
 
 
+class CourtHandoffStatus(str, Enum):
+    WAITING_FRIEND = "waiting_friend"
+    WAITING_DETAILS = "waiting_details"
+    COMPLETED = "completed"
+
+
+class CourtHandoff(BaseModel):
+    task_id: str
+    peer_qq: str
+    slot_date: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    status: CourtHandoffStatus = CourtHandoffStatus.WAITING_FRIEND
+    received_texts: list[str] = Field(default_factory=list)
+    location: str | None = None
+    card_number: str | None = None
+    created_at: datetime
+    greeted_at: datetime | None = None
+    thanked_at: datetime | None = None
+    owner_notified_at: datetime | None = None
+
+
+class CourtHandoffDetails(BaseModel):
+    location: str | None = None
+    card_number: str | None = None
+
+
 class ResolvedSlot(BaseModel):
     date: str
     start_time: str
@@ -134,6 +161,7 @@ class PersistedState(BaseModel):
     weather_alert_paused: bool = False
     pending_auto_recall: AutoRecallTask | None = None
     pending_temporary_recall: AutoRecallTask | None = None
+    court_handoff: CourtHandoff | None = None
     notification_cc_qqs: list[str] = Field(
         default_factory=list,
         max_length=MAX_NOTIFICATION_CC_RECIPIENTS,

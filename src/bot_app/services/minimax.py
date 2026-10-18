@@ -8,7 +8,13 @@ from typing import Any
 import httpx
 
 from bot_app.config import MiniMaxConfig
-from bot_app.models import ExchangeParseResult, LLMDecision, ResolvedSlot, SwapWatchRule
+from bot_app.models import (
+    CourtHandoffDetails,
+    ExchangeParseResult,
+    LLMDecision,
+    ResolvedSlot,
+    SwapWatchRule,
+)
 
 
 class MiniMaxProvider:
@@ -101,6 +107,29 @@ class MiniMaxProvider:
             reason=str(decision_data.get("reason", "")),
             needs_llm=False,
         )
+
+    async def extract_court_handoff_details(
+        self,
+        text: str,
+        current_location: str | None = None,
+        current_card_number: str | None = None,
+    ) -> CourtHandoffDetails:
+        prompt = "\n".join(
+            [
+                "你负责从羽毛球场地交接私聊中提取两项信息：场地具体位置和对方的一卡通号。",
+                "位置可以是体育馆、楼层、场馆区域、场地编号或它们的组合。",
+                "一卡通号通常是一串数字；不要把 QQ 号、日期、时间、场地编号或联系电话误认为一卡通号。",
+                "信息不明确时对应字段返回 null，不要猜测。",
+                "保留一卡通号的原始字符串，不要做数学转换。",
+                f"此前已确认的位置：{current_location or '无'}",
+                f"此前已确认的一卡通号：{current_card_number or '无'}",
+                '只输出 JSON：{"location":"体育馆A区3号场","card_number":"12345678"}',
+                f"累计私聊及图片 OCR 文本：\n{text}",
+            ]
+        )
+        response = await self._post_prompt(prompt, max_tokens=400)
+        data = self._extract_json(self._extract_content(response))
+        return CourtHandoffDetails.model_validate(data)
 
     async def assess_swap_match(
         self,

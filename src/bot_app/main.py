@@ -22,5 +22,6 @@ def bootstrap() -> None:
     set_runtime(build_runtime(config))
     load_plugin("bot_app.plugins.message_ingest")
     load_plugin("bot_app.plugins.private_commands")
+    load_plugin("bot_app.plugins.court_handoff")
     load_plugin("bot_app.plugins.avatar_rotation")
     load_plugin("bot_app.plugins.weather_alert")

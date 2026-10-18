@@ -1050,6 +1050,7 @@ async def _confirm_task_locked(bot: Bot, sender_id: str, token: str) -> None:
         return
 
     updated = await runtime.approval.mark_sent(task, datetime.now())
+    await runtime.court_handoff.start(bot, updated)
     await runtime.notifier.send_confirm_result(bot, updated)
 
 

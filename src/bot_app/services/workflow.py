@@ -10,6 +10,7 @@ from bot_app.config import AppConfig
 from bot_app.models import ApprovalTaskKind, AutoRecallTask, ClaimMode, IncomingGroupMessage, ParsedCandidate, ResolvedSlot, SwapWatchRule
 from bot_app.services.approval import ApprovalService
 from bot_app.services.cooldown import CooldownService
+from bot_app.services.court_handoff import CourtHandoffService
 from bot_app.services.exchange_parse import ExchangeParseService
 from bot_app.services.notify import NotifyService
 from bot_app.services.prefilter import PrefilterService
@@ -51,6 +52,7 @@ class ClaimWorkflow:
         approval: ApprovalService,
         cooldown: CooldownService,
         notifier: NotifyService,
+        court_handoff: CourtHandoffService | None = None,
     ) -> None:
         self.config = config
         self.store = store
@@ -61,6 +63,7 @@ class ClaimWorkflow:
         self.approval = approval
         self.cooldown = cooldown
         self.notifier = notifier
+        self.court_handoff = court_handoff
         self.claim_lock = asyncio.Lock()
         self._recent_claims_by_group: dict[str, list[tuple[datetime, str, str]]] = {}
 
@@ -312,7 +315,12 @@ class ClaimWorkflow:
             await self.store.set_pending_temporary_recall(recall_task)
         if manages_auto_state and await self._recall_auto_claim_if_llm_rejects(bot, updated, sent_message_id, parsed):
             return
+        await self._start_court_handoff(bot, updated)
         await self.notifier.send_auto_claim_result(bot, updated, await self.cooldown.get_remaining(updated.sent_at))
+
+    async def _start_court_handoff(self, bot: Bot, task) -> None:
+        if self.court_handoff is not None:
+            await self.court_handoff.start(bot, task)
 
     def has_later_group_claim(self, task) -> bool:
         claims = self._recent_claims_by_group.get(task.group_id, [])

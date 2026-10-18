@@ -6,7 +6,21 @@ from pathlib import Path
 import json
 import logging
 
-from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, AutoRecallTask, ClaimMode, DismissedClaimSlot, MAX_NOTIFICATION_CC_RECIPIENTS, PersistedState, ResolvedSlot, SwapWatchRule, TemporaryClaimSlot
+from bot_app.models import (
+    ApprovalTask,
+    ApprovalTaskKind,
+    ApprovalTaskStatus,
+    AutoRecallTask,
+    ClaimMode,
+    CourtHandoff,
+    CourtHandoffStatus,
+    DismissedClaimSlot,
+    MAX_NOTIFICATION_CC_RECIPIENTS,
+    PersistedState,
+    ResolvedSlot,
+    SwapWatchRule,
+    TemporaryClaimSlot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +198,25 @@ class JsonStateStore:
     async def set_pending_temporary_recall(self, recall_task: AutoRecallTask | None) -> None:
         async with self._lock:
             self._state.pending_temporary_recall = recall_task
+            self._write_to_disk()
+
+    async def get_court_handoff(self) -> CourtHandoff | None:
+        async with self._lock:
+            handoff = self._state.court_handoff
+            return handoff.model_copy(deep=True) if handoff else None
+
+    async def start_court_handoff(self, handoff: CourtHandoff) -> tuple[CourtHandoff, bool]:
+        async with self._lock:
+            existing = self._state.court_handoff
+            if existing is not None and existing.status != CourtHandoffStatus.COMPLETED:
+                return existing.model_copy(deep=True), False
+            self._state.court_handoff = handoff
+            self._write_to_disk()
+            return handoff.model_copy(deep=True), True
+
+    async def update_court_handoff(self, handoff: CourtHandoff) -> None:
+        async with self._lock:
+            self._state.court_handoff = handoff
             self._write_to_disk()
 
     async def get_notification_cc_qqs(self) -> list[str]:

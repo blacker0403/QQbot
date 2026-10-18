@@ -43,19 +43,15 @@ class NotifyService:
         self.config = config
         self.store = store
 
-    async def _owner_recipients(self, include_secondary: bool = True) -> list[str]:
-        recipients = [self.config.owner_qq]
-        if not include_secondary:
-            return recipients
-        secondary_owner_qq = await self.store.get_secondary_owner_qq()
-        if not secondary_owner_qq:
-            secondary_owner_qq = self.config.secondary_owner_qq
-        if secondary_owner_qq and secondary_owner_qq not in recipients:
-            recipients.append(secondary_owner_qq)
-        return recipients
+    async def _notification_cc_recipients(self) -> list[str]:
+        return [
+            qq
+            for qq in await self.store.get_notification_cc_qqs()
+            if qq != self.config.owner_qq
+        ]
 
     async def send_text(self, bot: Bot, message: str, recipients: list[str] | None = None) -> None:
-        target_recipients = recipients or await self._owner_recipients()
+        target_recipients = recipients if recipients is not None else [self.config.owner_qq]
         sent_count = 0
         last_error: Exception | None = None
         failed_recipients: list[tuple[str, Exception]] = []
@@ -185,10 +181,14 @@ class NotifyService:
             lines.insert(1, f"规则：{task.matched_rule_id or '未知'}")
             lines.insert(2, f"我可提供：{format_slot(task.matched_have_slot)}")
             lines.insert(3, f"我想换到：{format_slot(task.matched_want_slot)}")
-        await self.send_text(
-            bot,
-            "\n".join(lines),
-        )
+        message = "\n".join(lines)
+        await self.send_text(bot, message, recipients=[self.config.owner_qq])
+        if task.task_kind == ApprovalTaskKind.CLAIM:
+            await self.send_text(
+                bot,
+                f"{message}\n通知抄送：仅供查看，无法操作机器人",
+                recipients=await self._notification_cc_recipients(),
+            )
 
     async def send_auto_claim_result(self, bot: Bot, task: ApprovalTask, remaining: timedelta) -> None:
         pending_auto_recall = await self.store.get_pending_auto_recall()
@@ -210,15 +210,17 @@ class NotifyService:
         response_interval = _format_claim_response_interval(task)
         if response_interval:
             lines.append(response_interval)
-        lines.extend(
-            [
-                f"自动模式冷却：{_format_remaining(remaining)}",
-                recall_hint,
-            ]
+        lines.append(f"自动模式冷却：{_format_remaining(remaining)}")
+        message = "\n".join(lines)
+        await self.send_text(
+            bot,
+            f"{message}\n{recall_hint}",
+            recipients=[self.config.owner_qq],
         )
         await self.send_text(
             bot,
-            "\n".join(lines),
+            f"{message}\n通知抄送：仅供查看，无法操作机器人",
+            recipients=await self._notification_cc_recipients(),
         )
 
     async def send_auto_recall_result(self, bot: Bot, recall_task: AutoRecallTask) -> None:

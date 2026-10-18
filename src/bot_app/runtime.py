@@ -47,8 +47,14 @@ def get_runtime() -> AppRuntime:
 
 def build_runtime(config: AppConfig) -> AppRuntime:
     store = JsonStateStore(config.storage_path)
-    if config.secondary_owner_qq and not store._state.secondary_owner_qq:
-        store._state.secondary_owner_qq = config.secondary_owner_qq
+    normalized_cc_qqs = list(
+        dict.fromkeys(qq for qq in store._state.notification_cc_qqs if qq != config.owner_qq)
+    )
+    if normalized_cc_qqs != store._state.notification_cc_qqs:
+        store._state.notification_cc_qqs = normalized_cc_qqs
+        store._write_to_disk()
+    if config.notification_cc_qqs and not store._state.notification_cc_qqs:
+        store._state.notification_cc_qqs = list(config.notification_cc_qqs)
         store._write_to_disk()
     prefilter = PrefilterService(config.keywords.include, config.keywords.exclude)
     slot_parser = SlotParser(config)

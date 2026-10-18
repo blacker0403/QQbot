@@ -5,8 +5,10 @@ from pathlib import Path
 import os
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import yaml
+
+from bot_app.models import MAX_NOTIFICATION_CC_RECIPIENTS
 
 
 class KeywordsConfig(BaseModel):
@@ -87,7 +89,11 @@ class WeatherAlertConfig(BaseModel):
 
 class AppConfig(BaseModel):
     owner_qq: str
-    secondary_owner_qq: str | None = None
+    notification_cc_qqs: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_NOTIFICATION_CC_RECIPIENTS,
+    )
+    secondary_owner_qq: str | None = Field(default=None, exclude=True)
     target_groups: list[str] = Field(default_factory=list)
     target_campus_key: str = "huqu"
     campus_aliases: dict[str, list[str]] = Field(default_factory=dict)
@@ -102,6 +108,20 @@ class AppConfig(BaseModel):
     self_learning: SelfLearningConfig = Field(default_factory=SelfLearningConfig)
     avatar_rotation: AvatarRotationConfig = Field(default_factory=AvatarRotationConfig)
     weather_alert: WeatherAlertConfig = Field(default_factory=WeatherAlertConfig)
+
+    @model_validator(mode="after")
+    def normalize_notification_cc_qqs(self) -> AppConfig:
+        recipients = list(dict.fromkeys(self.notification_cc_qqs))
+        if self.secondary_owner_qq and self.secondary_owner_qq not in recipients:
+            recipients.append(self.secondary_owner_qq)
+        if self.owner_qq in recipients:
+            raise ValueError("notification_cc_qqs must not include owner_qq")
+        if len(recipients) > MAX_NOTIFICATION_CC_RECIPIENTS:
+            raise ValueError(
+                f"notification_cc_qqs supports at most {MAX_NOTIFICATION_CC_RECIPIENTS} QQ numbers"
+            )
+        self.notification_cc_qqs = recipients
+        return self
 
     @property
     def min_start_time_obj(self) -> time:

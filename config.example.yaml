@@ -1,5 +1,5 @@
 owner_qq: "replace-with-owner-qq"
-secondary_owner_qq:
+notification_cc_qqs: []
 target_groups:
   - "replace-with-target-group-id"
 

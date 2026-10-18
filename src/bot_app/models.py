@@ -6,6 +6,9 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 
+MAX_NOTIFICATION_CC_RECIPIENTS = 5
+
+
 class IncomingGroupMessage(BaseModel):
     group_id: str
     user_id: str
@@ -131,7 +134,11 @@ class PersistedState(BaseModel):
     weather_alert_paused: bool = False
     pending_auto_recall: AutoRecallTask | None = None
     pending_temporary_recall: AutoRecallTask | None = None
-    secondary_owner_qq: str | None = None
+    notification_cc_qqs: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_NOTIFICATION_CC_RECIPIENTS,
+    )
+    secondary_owner_qq: str | None = Field(default=None, exclude=True)
     tasks: dict[str, ApprovalTask] = Field(default_factory=dict)
     swap_watch_rules: dict[str, SwapWatchRule] = Field(default_factory=dict)
     temporary_claim_slots: list[TemporaryClaimSlot] = Field(default_factory=list)

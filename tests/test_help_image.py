@@ -67,7 +67,7 @@ class HelpImageTest(unittest.TestCase):
 
         self.assertEqual(message.type, "image")
         self.assertTrue(message.data["file"].startswith("file:///"))
-        self.assertTrue(message.data["file"].endswith("/help_card_imagegen_20260511.png"))
+        self.assertTrue(message.data["file"].endswith("/help_card_notification_cc_20261018.png"))
 
 
 if __name__ == "__main__":

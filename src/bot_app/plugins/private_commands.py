@@ -13,7 +13,7 @@ import uuid
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
 
-from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, ClaimMode, DismissedClaimSlot, SwapWatchRule, TemporaryClaimSlot
+from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, ClaimMode, DismissedClaimSlot, MAX_NOTIFICATION_CC_RECIPIENTS, SwapWatchRule, TemporaryClaimSlot
 from bot_app.runtime import get_runtime
 from bot_app.services.avatar_rotation import AvatarRotator
 from bot_app.services.notify import format_slot
@@ -89,7 +89,8 @@ def _normalize_command(text: str) -> ParsedCommand | None:
         "重置冷却": "resetcooldown",
         "resetall": "resetall",
         "重置全部": "resetall",
-        "secondary": "secondary",
+        "cc": "cc",
+        "抄送": "cc",
         "swap": "swap",
         "tempclaim": "tempclaim",
         "stopclaim": "stopclaim",
@@ -103,8 +104,10 @@ def _normalize_command(text: str) -> ParsedCommand | None:
         "天气": "weather",
         "restart": "restart",
         "重启": "restart",
-        "setsecondary": "setsecondary",
-        "removesecondary": "removesecondary",
+        "addcc": "addcc",
+        "添加抄送": "addcc",
+        "removecc": "removecc",
+        "移除抄送": "removecc",
     }
     normalized = aliases.get(raw_name)
     if normalized is None:
@@ -159,8 +162,8 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
         await _handle_listen_command(bot, sender_id, command.args)
         return
 
-    if command.name == "secondary":
-        await _reply_to_user(bot, sender_id, await _build_secondary_message())
+    if command.name == "cc":
+        await _reply_to_user(bot, sender_id, await _build_notification_cc_message())
         return
 
     if command.name == "swap":
@@ -246,34 +249,41 @@ async def handle_private_command(bot: Bot, event: PrivateMessageEvent) -> None:
         await _reply_to_user(bot, sender_id, f"已重置：已取消 {len(cancelled)} 个待确认任务")
         return
 
-    if command.name == "setsecondary":
-        if sender_id != runtime.config.owner_qq:
-            await _reply_to_user(bot, sender_id, "只有第一主人可以设置第二主人")
-            return
+    if command.name == "addcc":
         if not command.args:
-            await _reply_to_user(bot, sender_id, "用法：/setsecondary <QQ号>")
+            await _reply_to_user(bot, sender_id, "用法：/addcc <QQ号>")
             return
-        secondary_owner_qq = command.args[0].strip()
-        if not secondary_owner_qq.isdigit():
-            await _reply_to_user(bot, sender_id, "第二主人 QQ 号必须是纯数字")
+        notification_cc_qq = command.args[0].strip()
+        if not notification_cc_qq.isdigit():
+            await _reply_to_user(bot, sender_id, "通知抄送 QQ 号必须是纯数字")
             return
-        if secondary_owner_qq == runtime.config.owner_qq:
-            await _reply_to_user(bot, sender_id, "第一主人和第二主人不能相同")
+        if notification_cc_qq == runtime.config.owner_qq:
+            await _reply_to_user(bot, sender_id, "第一主人无需加入通知抄送")
             return
-        await runtime.store.set_secondary_owner_qq(secondary_owner_qq)
-        await _reply_to_user(bot, sender_id, f"已设置第二主人：{secondary_owner_qq}")
+        try:
+            added = await runtime.store.add_notification_cc_qq(notification_cc_qq)
+        except ValueError:
+            await _reply_to_user(bot, sender_id, f"添加失败：通知抄送最多 {MAX_NOTIFICATION_CC_RECIPIENTS} 人（不含第一主人）")
+            return
+        if not added:
+            await _reply_to_user(bot, sender_id, f"该 QQ 已在通知抄送中：{notification_cc_qq}")
+            return
+        await _reply_to_user(bot, sender_id, f"已添加通知抄送：{notification_cc_qq}")
         return
 
-    if command.name == "removesecondary":
-        if sender_id != runtime.config.owner_qq:
-            await _reply_to_user(bot, sender_id, "只有第一主人可以移除第二主人")
+    if command.name == "removecc":
+        if not command.args:
+            await _reply_to_user(bot, sender_id, "用法：/removecc <QQ号>")
             return
-        secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
-        if not secondary_owner_qq:
-            await _reply_to_user(bot, sender_id, "当前没有第二主人")
+        notification_cc_qq = command.args[0].strip()
+        if not notification_cc_qq.isdigit():
+            await _reply_to_user(bot, sender_id, "通知抄送 QQ 号必须是纯数字")
             return
-        await runtime.store.set_secondary_owner_qq(None)
-        await _reply_to_user(bot, sender_id, f"已移除第二主人：{secondary_owner_qq}")
+        removed = await runtime.store.remove_notification_cc_qq(notification_cc_qq)
+        if not removed:
+            await _reply_to_user(bot, sender_id, f"该 QQ 不在通知抄送中：{notification_cc_qq}")
+            return
+        await _reply_to_user(bot, sender_id, f"已移除通知抄送：{notification_cc_qq}")
         return
 
 
@@ -1013,7 +1023,7 @@ async def _confirm_task_locked(bot: Bot, sender_id: str, token: str) -> None:
 
     if not claimed:
         if task.status in {ApprovalTaskStatus.PROCESSING, ApprovalTaskStatus.SENT}:
-            await _reply_to_user(bot, sender_id, f"确认失败：确认码 {token} 已被另一主人处理")
+            await _reply_to_user(bot, sender_id, f"确认失败：确认码 {token} 已被处理")
             return
         await _reply_to_user(bot, sender_id, f"确认失败：确认码 {token} 当前状态为 {task.status}")
         return
@@ -1122,10 +1132,7 @@ async def _resolve_single_pending_token(bot: Bot, sender_id: str, action: str) -
 
 async def _is_authorized_user(sender_id: str) -> bool:
     runtime = get_runtime()
-    if sender_id == runtime.config.owner_qq:
-        return True
-    secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
-    return sender_id == secondary_owner_qq
+    return sender_id == runtime.config.owner_qq
 
 
 def _build_group_reply_message(task: ApprovalTask) -> str | Message:
@@ -1152,7 +1159,7 @@ async def _build_status_message() -> str:
     runtime = get_runtime()
     pending_tasks = await runtime.store.list_pending_tasks()
     swap_rules = await runtime.store.list_swap_watch_rules()
-    secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
+    notification_cc_qqs = await runtime.store.get_notification_cc_qqs()
     claim_mode = await runtime.store.get_claim_mode()
     claim_listening_paused = await runtime.store.is_claim_listening_paused()
     weather_alert_paused = await runtime.store.is_weather_alert_paused()
@@ -1160,7 +1167,7 @@ async def _build_status_message() -> str:
     lines = [
         "【当前状态】",
         f"第一主人：{runtime.config.owner_qq}",
-        f"第二主人：{secondary_owner_qq or '未设置'}",
+        f"通知抄送：{len(notification_cc_qqs)}/{MAX_NOTIFICATION_CC_RECIPIENTS} 人",
         f"送场监听：{'已暂停' if claim_listening_paused else '运行中'}",
         f"送场模式：{'自动' if claim_mode == ClaimMode.AUTO else '手动'}",
         f"天气提醒：{_format_weather_status(runtime.config.weather_alert.enabled, weather_alert_paused)}",
@@ -1182,13 +1189,13 @@ async def _build_status_message() -> str:
             f"- {task.token} | {task.task_kind.value} | {task.group_name} | {_format_task_time(task)} | 过期 {task.expires_at.strftime('%H:%M:%S')}"
         )
     lines.append("快捷操作：回复 1 确认，回复 0 取消")
-    lines.append("可用命令：/pending /mode /secondary /swap")
+    lines.append("可用命令：/pending /mode /cc /swap")
     return "\n".join(lines)
 
 
 async def _build_health_message() -> str:
     runtime = get_runtime()
-    secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
+    notification_cc_qqs = await runtime.store.get_notification_cc_qqs()
     swap_rules = await runtime.store.list_swap_watch_rules()
     claim_mode = await runtime.store.get_claim_mode()
     claim_listening_paused = await runtime.store.is_claim_listening_paused()
@@ -1204,7 +1211,7 @@ async def _build_health_message() -> str:
         [
             "【健康检查】",
             f"第一主人：{runtime.config.owner_qq}",
-            f"第二主人：{secondary_owner_qq or '未设置'}",
+            f"通知抄送：{len(notification_cc_qqs)}/{MAX_NOTIFICATION_CC_RECIPIENTS} 人",
             f"送场监听：{'已暂停' if claim_listening_paused else '运行中'}",
             f"送场模式：{'自动' if claim_mode == ClaimMode.AUTO else '手动'}",
             f"天气提醒：{_format_weather_status(runtime.config.weather_alert.enabled, weather_alert_paused)}",
@@ -1274,7 +1281,7 @@ async def _build_mode_message() -> str:
         f"当前模式：{'自动' if claim_mode == ClaimMode.AUTO else '手动'}",
     ]
     if claim_mode == ClaimMode.MANUAL:
-        lines.append("手动模式：维持现状，需要主人私聊回复 1 / 0 确认")
+        lines.append("手动模式：维持现状，需要第一主人私聊回复 1 / 0 确认")
     else:
         lines.append("自动模式：识别送场后等待 1 秒自动扣 1，并私聊主号结果")
     if remaining.total_seconds() > 0:
@@ -1300,18 +1307,26 @@ async def _build_listen_message() -> str:
     return "\n".join(lines)
 
 
-async def _build_secondary_message() -> str:
+async def _build_notification_cc_message() -> str:
     runtime = get_runtime()
-    secondary_owner_qq = await runtime.store.get_secondary_owner_qq()
-    return "\n".join(
+    notification_cc_qqs = await runtime.store.get_notification_cc_qqs()
+    lines = [
+        "【通知抄送】",
+        f"第一主人：{runtime.config.owner_qq}",
+        f"抄送人数：{len(notification_cc_qqs)}/{MAX_NOTIFICATION_CC_RECIPIENTS}",
+        "权限：仅接收抢到送场地后的结果通知，不能操作机器人",
+    ]
+    if notification_cc_qqs:
+        lines.append(f"抄送名单：{'、'.join(notification_cc_qqs)}")
+    else:
+        lines.append("抄送名单：未设置")
+    lines.extend(
         [
-            "【第二主人】",
-            f"第一主人：{runtime.config.owner_qq}",
-            f"第二主人：{secondary_owner_qq or '未设置'}",
-            "设置：/setsecondary <QQ号>",
-            "移除：/removesecondary",
+            "添加：/addcc <QQ号>",
+            "移除：/removecc <QQ号>",
         ]
     )
+    return "\n".join(lines)
 
 
 def _format_weather_status(config_enabled: bool, paused: bool) -> str:
@@ -1407,7 +1422,7 @@ def _build_help_message() -> str:
             "0 或 /0: 有待确认任务时取消当前候选；自动模式刚扣 1 后则撤回刚刚那条 1",
             "/resetcooldown: 重置自动模式冷却",
             "/resetall: 清空待确认任务",
-            "/secondary: 查看第二主人",
+            "/cc: 查看通知抄送名单",
             "/swap list: 查看全部换场监控规则",
             "/swap 我有今晚78，周六12-13，我需要明晚89，周六11-12",
             "/tempclaim 4-5: 添加仅今天有效的临时抢场时段，明天自动清除",
@@ -1415,15 +1430,15 @@ def _build_help_message() -> str:
             "/avatar: 立即从头像池随机更换 bot 头像",
             "/selflearn preview|run|apply: 自学习规则预览、验证和确认应用",
             "/restart: 重启 bot 进程",
-            "/setsecondary <QQ>: 设置第二主人，仅第一主人可用",
-            "/removesecondary: 移除第二主人，仅第一主人可用",
+            "/addcc <QQ>: 添加通知抄送（最多 5 人，不含第一主人）",
+            "/removecc <QQ>: 移除通知抄送",
             "兼容旧命令：health / 状态",
         ]
     )
 
 
 def _help_image_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "assets" / "help_card_imagegen_20260511.png"
+    return Path(__file__).resolve().parents[1] / "assets" / "help_card_notification_cc_20261018.png"
 
 
 def _build_help_image_message() -> MessageSegment | str:

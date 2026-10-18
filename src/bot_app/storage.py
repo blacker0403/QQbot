@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 import logging
 
-from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, AutoRecallTask, ClaimMode, DismissedClaimSlot, PersistedState, ResolvedSlot, SwapWatchRule, TemporaryClaimSlot
+from bot_app.models import ApprovalTask, ApprovalTaskKind, ApprovalTaskStatus, AutoRecallTask, ClaimMode, DismissedClaimSlot, MAX_NOTIFICATION_CC_RECIPIENTS, PersistedState, ResolvedSlot, SwapWatchRule, TemporaryClaimSlot
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,14 @@ class JsonStateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self._state = self._read_from_disk()
+        if self._state.secondary_owner_qq:
+            if (
+                self._state.secondary_owner_qq not in self._state.notification_cc_qqs
+                and len(self._state.notification_cc_qqs) < MAX_NOTIFICATION_CC_RECIPIENTS
+            ):
+                self._state.notification_cc_qqs.append(self._state.secondary_owner_qq)
+            self._state.secondary_owner_qq = None
+            self._write_to_disk()
 
     def _read_from_disk(self) -> PersistedState:
         if not self.path.exists():
@@ -32,15 +40,6 @@ class JsonStateStore:
         with tmp_path.open("w", encoding="utf-8") as file:
             json.dump(self._state.model_dump(mode="json"), file, ensure_ascii=False, indent=2)
         tmp_path.replace(self.path)
-
-    async def initialize_secondary_owner_qq(self, qq: str | None) -> None:
-        if not qq:
-            return
-        async with self._lock:
-            if self._state.secondary_owner_qq:
-                return
-            self._state.secondary_owner_qq = qq
-            self._write_to_disk()
 
     async def create_task(self, task: ApprovalTask) -> None:
         async with self._lock:
@@ -187,14 +186,27 @@ class JsonStateStore:
             self._state.pending_temporary_recall = recall_task
             self._write_to_disk()
 
-    async def get_secondary_owner_qq(self) -> str | None:
+    async def get_notification_cc_qqs(self) -> list[str]:
         async with self._lock:
-            return self._state.secondary_owner_qq
+            return list(self._state.notification_cc_qqs)
 
-    async def set_secondary_owner_qq(self, qq: str | None) -> None:
+    async def add_notification_cc_qq(self, qq: str) -> bool:
         async with self._lock:
-            self._state.secondary_owner_qq = qq
+            if qq in self._state.notification_cc_qqs:
+                return False
+            if len(self._state.notification_cc_qqs) >= MAX_NOTIFICATION_CC_RECIPIENTS:
+                raise ValueError("notification CC recipient limit reached")
+            self._state.notification_cc_qqs.append(qq)
             self._write_to_disk()
+            return True
+
+    async def remove_notification_cc_qq(self, qq: str) -> bool:
+        async with self._lock:
+            if qq not in self._state.notification_cc_qqs:
+                return False
+            self._state.notification_cc_qqs.remove(qq)
+            self._write_to_disk()
+            return True
 
     async def claim_weather_alert_key(
         self,

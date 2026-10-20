@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly preventive restart for NapCat and the QQ bot
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+Persistent=true
+AccuracySec=1min
+Unit=napcat-maintenance.service
+
+[Install]
+WantedBy=timers.target

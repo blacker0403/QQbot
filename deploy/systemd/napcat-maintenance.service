@@ -1,0 +1,9 @@
+[Unit]
+Description=Preventive restart for NapCat and the QQ bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/Linux_bot/scripts/maintain_napcat.sh restart
+TimeoutStartSec=180

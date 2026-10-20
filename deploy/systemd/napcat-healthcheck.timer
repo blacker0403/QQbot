@@ -1,0 +1,11 @@
+[Unit]
+Description=Check NapCat event transport every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=napcat-healthcheck.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover NapCat when the Xvfb client limit is exhausted
+After=napcat.service qqbot.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/Linux_bot/scripts/maintain_napcat.sh check
+TimeoutStartSec=180
